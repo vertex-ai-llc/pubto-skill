@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pubto Publish"
+  short_description: "发布、验证、停止、删除和管理本机公网服务与映射连接"
+  default_prompt: "Use $pubto-publish to publish or map a local service through Pubto and verify the result."
