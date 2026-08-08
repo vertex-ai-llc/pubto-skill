@@ -7,6 +7,22 @@ description: Publish, inspect, verify, edit, expire, stop, rotate, and remove lo
 
 Use the installed `pubto` CLI first. It discovers the running Desktop Agent's ephemeral loopback address automatically. If the CLI is unavailable, use `scripts/pubtoctl.sh`, which reads the same discovery record. Never publish the Agent API itself.
 
+## Desktop bootstrap
+
+If Pubto Desktop is missing, tell the user that publishing requires the local Desktop Agent and ask for confirmation before installing anything. After confirmation, use the platform installer bundled with this skill:
+
+```sh
+# macOS Apple Silicon or Intel
+scripts/install-desktop.sh --yes
+```
+
+```powershell
+# Windows x64
+powershell -ExecutionPolicy Bypass -File scripts/install-desktop.ps1 -Yes
+```
+
+The installers select the matching artifact from Pubto's HTTPS release manifest, require its SHA-256 checksum, preserve Desktop settings and local SQLite data, launch Pubto, and verify the ephemeral loopback Agent through its discovery record. Do not use `--yes` unless the user explicitly approved installation. Do not bypass macOS Gatekeeper, Windows UAC, or package signature warnings. If the manifest has no compatible signed artifact, report that publishing cannot start on that platform.
+
 ## Publish
 
 Choose exactly one source:
