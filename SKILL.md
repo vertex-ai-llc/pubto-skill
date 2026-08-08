@@ -1,57 +1,60 @@
 ---
 name: pubto-publish
-description: Publish, inspect, verify, edit, expire, stop, rotate, and remove independent local HTTP/HTTPS, WS/WSS, directory, file, or TCP endpoints through a running Pubto Desktop Agent. Use when an AI needs to create a public preview, expose a local API or database, choose a Relay, map a remote Pubto endpoint back to localhost, or diagnose an unavailable publication.
+description: Publish, inspect, verify, edit, expire, stop, rotate, and remove local HTTP/HTTPS, WS/WSS, file, safe directory, static website, or TCP endpoints through Pubto. Use when an AI needs to preview a local project, expose a port or API, share a document, choose a Relay, map a remote endpoint to localhost, or diagnose an unavailable Pubto publication.
 ---
 
 # Pubto Publish
 
-Use the loopback Agent API at `http://127.0.0.1:8788`. Never publish the Agent API itself.
+Use the installed `pubto` CLI first. It discovers the running Desktop Agent's ephemeral loopback address automatically. If the CLI is unavailable, use `scripts/pubtoctl.sh`, which reads the same discovery record. Never publish the Agent API itself.
 
-## Model
+## Publish
 
-- A project is a name-only folder.
-- An endpoint is one publication: one random 16-character slug, one target, one protocol, one Relay, and independent lifecycle/access settings.
-- Creating an endpoint publishes it immediately. Do not issue a second project-level publish action.
-- `http` targets may use `http://` or `https://`; `websocket` targets may use `ws://` or `wss://`; PostgreSQL, MySQL, Redis, SSH, MQTT, and other byte streams use `tcp`.
-- A `directory` target may be a folder or one file. A folder renders a safe file listing and never executes `index.html` automatically. Choose the `website` source mode when the selected folder should serve `index.html` as an ordinary HTTP website; the Agent hosts it without requiring a local port, and Control/Relay still see protocol `http`. Files over `maxFileBytes` (default 1 MiB) return 413.
+Choose exactly one source:
 
-## Publish workflow
+```sh
+pubto publish --port 3000 --name Frontend --duration 30m
+pubto publish --url https://127.0.0.1:8443
+pubto publish --ws-port 8998
+pubto publish --tcp 5432
+pubto publish --file ./report.docx
+pubto publish --dir ./documents
+pubto publish --website ./dist
+```
 
-1. Call `GET /v1/health`, `GET /v1/capabilities`, and `GET /v1/relays`.
-2. Reuse a matching project or create a folder with `POST /v1/projects` and `{"name":"..."}`.
-3. Create exactly one endpoint with `POST /v1/projects/{projectId}/entries` and `name`, `kind`, `target`, and `relayId`.
-4. Re-read `GET /v1/projects` until that endpoint reports `running`, `publicUrl`, and its `reachable` state.
-5. Verify with a read-only protocol-appropriate request. Never send application credentials during a probe.
-6. Apply optional password or duration only after creation. Use a 30-minute expiry by default for an explicitly temporary preview.
-7. Report the exact public address. Delete the endpoint when the requested temporary use is complete.
+Treat a Project as a name-only group. Each Endpoint has one independent random address, target, Relay, lifecycle, password, expiry, and quota policy. Creation publishes immediately; do not issue a second project-level publish action. Reuse the first suitable Project unless the user asks for another.
 
-## Endpoint operations
+Use HTTP for HTTP/HTTPS targets, WebSocket for WS/WSS targets, and TCP for PostgreSQL, MySQL, Redis, SSH, MQTT, and other byte streams. Use `--dir` for a safe file listing that never executes `index.html`; use `--website` when a selected folder should serve `index.html`. Published files open in the visitor's public browser Viewer; unsupported formats remain downloadable.
+
+After creation, read the returned Endpoint until it reports `running`, a `publicUrl`, and its reachability state. Verify with a read-only protocol-appropriate request without application credentials, then report the exact public address.
+
+## Operate
+
+```sh
+pubto status
+pubto list
+pubto start --endpoint ENTRY_ID
+pubto stop --endpoint ENTRY_ID
+pubto delete --endpoint ENTRY_ID
+```
+
+Use `scripts/pubtoctl.sh` or the typed loopback API described by `GET /v1/capabilities` for advanced operations:
 
 ```text
 PUT    /v1/projects/{projectId}/entries/{entryId}                  edit name, kind, target, relayId
-DELETE /v1/projects/{projectId}/entries/{entryId}                  revoke and delete; old address becomes 404
-POST   /v1/projects/{projectId}/entries/{entryId}/start|stop       independent lifecycle
-PUT    /v1/projects/{projectId}/entries/{entryId}/expiration       {"expiresAt":"RFC3339"} or empty
-PUT    /v1/projects/{projectId}/entries/{entryId}/password         {"password":"..."} or empty
-POST   /v1/projects/{projectId}/entries/{entryId}/rotate-address   old address becomes 404 immediately
-POST   /v1/projects/{projectId}/entries/{entryId}/report           {"reason":"..."}
+DELETE /v1/projects/{projectId}/entries/{entryId}                  revoke and delete
+POST   /v1/projects/{projectId}/entries/{entryId}/start|stop
+PUT    /v1/projects/{projectId}/entries/{entryId}/expiration
+PUT    /v1/projects/{projectId}/entries/{entryId}/password
+POST   /v1/projects/{projectId}/entries/{entryId}/rotate-address
+POST   /v1/projects/{projectId}/entries/{entryId}/report
 ```
 
-Changing a password invalidates old passwords and cookies immediately. Password plaintext is sent only to the loopback Agent, which stores a salted digest; Relay and Control never receive it.
-
-## Other APIs
-
-- Projects: `POST /v1/projects`, `PUT /v1/projects/{id}`, `DELETE /v1/projects/{id}`. Project deletion removes every endpoint after explicit confirmation.
-- Local mappings: `GET|POST /v1/bindings`, then `PUT|DELETE /v1/bindings/{id}` or `POST /v1/bindings/{id}/start|stop|test`.
-- Relay profiles: `GET|POST /v1/relays`, then `PUT|DELETE /v1/relays/{id}` or `POST /v1/relays/{id}/test`. An endpoint may be moved between profiles with its edit operation.
-- Agent: `GET /v1/daemon/status`, `POST /v1/daemon/restart`, `POST /v1/daemon/stop`.
+Changing a password invalidates old passwords and cookies immediately. Password plaintext goes only to the loopback Agent, which stores a salted digest. Deleting or rotating an Endpoint must make its old address return 404.
 
 ## Safety
 
-- Ask for confirmation before publishing databases, caches, SSH, admin panels, LAN targets, or public Internet targets.
-- Prefer a 30-minute expiry for sensitive temporary endpoints.
+- Ask before publishing databases, caches, SSH, admin panels, LAN targets, or public Internet targets.
+- Prefer a 30-minute duration for sensitive temporary Endpoints.
 - Never print Relay, Control, Cloudflare, database, or application secrets.
 - Treat TCP public addresses as raw sockets, not browser URLs.
-- Deleting or rotating must not redirect or reuse the old address.
-
-Use [scripts/pubtoctl.sh](scripts/pubtoctl.sh) for deterministic basic operations.
+- Delete a temporary Endpoint when the requested use is complete.

@@ -1,7 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-api="${PUBTO_AGENT_URL:-http://127.0.0.1:8788}"
+api="${PUBTO_AGENT_URL:-}"
+if [[ -z "$api" ]] && command -v node >/dev/null 2>&1; then
+  api=$(node -e '
+const fs=require("fs"),os=require("os"),path=require("path");
+const root=process.platform==="darwin"?path.join(os.homedir(),"Library","Application Support"):process.platform==="win32"?(process.env.APPDATA||path.join(os.homedir(),"AppData","Roaming")):(process.env.XDG_CONFIG_HOME||path.join(os.homedir(),".config"));
+try{const value=JSON.parse(fs.readFileSync(path.join(root,"pubto","agent-discovery.json"),"utf8")).url||"";const parsed=new URL(value);if(parsed.protocol!=="http:"||!["127.0.0.1","localhost","[::1]"].includes(parsed.hostname))process.exit(1);process.stdout.write(value.replace(/\/$/,""))}catch{process.exit(1)}
+' 2>/dev/null || true)
+fi
+if [[ -z "$api" ]]; then
+  printf '%s\n' 'Pubto Desktop Agent is not running or its local discovery record is unavailable.' >&2
+  exit 1
+fi
 command="${1:-help}"
 
 case "$command" in
@@ -23,7 +34,7 @@ case "$command" in
   publish)
     project_id="${2:?project id required}"
     name="${3:?endpoint name required}"
-    kind="${4:?kind required: http|directory|tcp|websocket}"
+    kind="${4:?kind required: http|directory|website|tcp|websocket}"
     target="${5:?target required}"
     relay_id="${6:-default}"
     payload=$(node -e 'process.stdout.write(JSON.stringify({name:process.argv[1],kind:process.argv[2],target:process.argv[3],relayId:process.argv[4]}))' "$name" "$kind" "$target" "$relay_id")
