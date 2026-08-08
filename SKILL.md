@@ -1,6 +1,6 @@
 ---
 name: pubto-publish
-description: Publish, inspect, verify, edit, expire, stop, rotate, and remove local HTTP/HTTPS, WS/WSS, file, safe directory, static website, or TCP endpoints through Pubto. Use when an AI needs to preview a local project, expose a port or API, share a document, choose a Relay, map a remote endpoint to localhost, or diagnose an unavailable Pubto publication.
+description: Publish, inspect, verify, edit, expire, stop, rotate, and remove local HTTP/HTTPS, WS/WSS, file, safe directory, static website, or TCP endpoints through Pubto. Use when an AI needs to preview a local project, expose a port or API, share a document, choose a Relay, map a remote endpoint to localhost, diagnose an unavailable Pubto publication, or troubleshoot browser CORS and preflight failures.
 ---
 
 # Pubto Publish
@@ -26,6 +26,27 @@ Treat a Project as a name-only group. Each Endpoint has one independent random a
 Use HTTP for HTTP/HTTPS targets, WebSocket for WS/WSS targets, and TCP for PostgreSQL, MySQL, Redis, SSH, MQTT, and other byte streams. Use `--dir` for a safe file listing that never executes `index.html`; use `--website` when a selected folder should serve `index.html`. Published files open in the visitor's public browser Viewer; unsupported formats remain downloadable.
 
 After creation, read the returned Endpoint until it reports `running`, a `publicUrl`, and its reachability state. Verify with a read-only protocol-appropriate request without application credentials, then report the exact public address.
+
+## Browser APIs and CORS
+
+Do not equate a reachable public URL or an HTTP 200 response with browser compatibility. For a browser API, identify the exact frontend Origin (scheme, host, and port), request URL, method, and non-simple request headers. If the frontend and API have the same public Origin, the browser has no CORS boundary: an application error such as `cross-origin writes are not allowed` means the source's CSRF/Origin guard does not trust its configured public Origin. Fix that source allowlist without enabling wildcard CORS.
+
+If the frontend and API Origins differ, run the read-only preflight check before asking the user to change code:
+
+```sh
+scripts/check-cors.sh https://PUBLIC_HOST/api/resource https://app.example.test POST 'content-type,authorization'
+```
+
+The check sends `OPTIONS` with `Origin`, `Access-Control-Request-Method`, and (when supplied) `Access-Control-Request-Headers`. Confirm that the response is a successful 2xx preflight and that:
+
+- `Access-Control-Allow-Origin` exactly matches the trusted Origin, or is `*` only for non-credentialed public reads;
+- `Access-Control-Allow-Methods` contains the requested method;
+- `Access-Control-Allow-Headers` contains each requested header;
+- `Access-Control-Allow-Credentials: true` is present only when the application intentionally uses cookies or other credentialed browser requests.
+
+If the tunnel returns an application JSON `4xx/5xx`, or `OPTIONS` is rejected by the source, report that the tunnel is working and the source program's CORS/CSRF policy is the fix point. Configure the source with an explicit Origin allowlist and a dedicated `OPTIONS` handler. Do not make Pubto strip or forge `Origin`, reflect arbitrary Origins, or add `Access-Control-Allow-Origin: *` by default: that can turn a protected write API into a cross-site request surface. With cookies, `*` is invalid and a permissive reflected Origin creates CSRF risk; require authentication, CSRF protection, and short-lived or password-protected publications where appropriate.
+
+For WebSocket endpoints, CORS headers do not authorize the upgrade. Check the source's `Origin` allowlist and the `101 Switching Protocols` handshake separately. TCP endpoints have no browser CORS layer and must be treated as raw public sockets.
 
 ## Operate
 
