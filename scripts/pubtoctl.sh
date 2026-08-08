@@ -40,6 +40,20 @@ case "$command" in
     payload=$(node -e 'process.stdout.write(JSON.stringify({name:process.argv[1],kind:process.argv[2],target:process.argv[3],relayId:process.argv[4]}))' "$name" "$kind" "$target" "$relay_id")
     exec curl -fsS -X POST "$api/v1/projects/$project_id/entries" -H 'content-type: application/json' --data "$payload"
     ;;
+  collection)
+    project_id="${2:?project id required}"
+    name="${3:?collection name required}"
+    description="${4:-}"
+    entry_ids="${5:?comma-separated entry ids required}"
+    payload=$(node -e 'process.stdout.write(JSON.stringify({name:process.argv[1],description:process.argv[2],entryIds:process.argv[3].split(",").map((id)=>id.trim()).filter(Boolean)}))' "$name" "$description" "$entry_ids")
+    curl -fsS -X PUT "$api/v1/homepage" -H 'content-type: application/json' --data "$payload" >/dev/null
+    project_json=$(curl -fsS "$api/v1/projects/$project_id")
+    if ! node -e 'const p=JSON.parse(process.argv[1]);process.exit((p.entries||[]).some((e)=>e.target==="pubto://homepage")?0:1)' "$project_json"; then
+      curl -fsS -X POST "$api/v1/projects/$project_id/entries" -H 'content-type: application/json' --data '{"name":"Collection","kind":"http","target":"pubto://homepage","relayId":"default"}'
+    else
+      printf '%s\n' "$project_json"
+    fi
+    ;;
   start|stop|rotate|delete-entry)
     project_id="${2:?project id required}"
     entry_id="${3:?entry id required}"
@@ -62,6 +76,7 @@ case "$command" in
       '  pubtoctl.sh health|capabilities|projects|relays|bindings' \
       '  pubtoctl.sh create-project NAME' \
       '  pubtoctl.sh publish PROJECT_ID NAME KIND TARGET [RELAY_ID]' \
+      '  pubtoctl.sh collection PROJECT_ID NAME DESCRIPTION ENTRY_ID[,ENTRY_ID...]' \
       '  pubtoctl.sh start|stop|rotate|delete-entry PROJECT_ID ENTRY_ID' \
       '  pubtoctl.sh expire-30m PROJECT_ID ENTRY_ID' >&2
     exit 2

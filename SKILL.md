@@ -27,6 +27,10 @@ Use HTTP for HTTP/HTTPS targets, WebSocket for WS/WSS targets, and TCP for Postg
 
 After creation, read the returned Endpoint until it reports `running`, a `publicUrl`, and its reachability state. Verify with a read-only protocol-appropriate request without application credentials, then report the exact public address.
 
+## Collections
+
+When someone needs to share several endpoints, files, or directories as one handoff, create a Collection inside the selected Project. A Collection is a generated public page containing multiple existing Endpoint links; it is not another transport or another copy of an Endpoint. Ask for a name, optional description, and the Endpoint IDs to include, then update `PUT /v1/homepage` with `{name,description,entryIds}` and publish the special `pubto://homepage` Endpoint in that Project if it does not already exist. The Desktop calls this action `New collection`; do not describe or add a separate `Publish Page` step.
+
 ## Browser APIs and CORS
 
 Do not equate a reachable public URL or an HTTP 200 response with browser compatibility. For a browser API, identify the exact frontend Origin (scheme, host, and port), request URL, method, and non-simple request headers. If the frontend and API have the same public Origin, the browser has no CORS boundary: an application error such as `cross-origin writes are not allowed` means the source's CSRF/Origin guard does not trust its configured public Origin. Fix that source allowlist without enabling wildcard CORS.
@@ -68,6 +72,7 @@ PUT    /v1/projects/{projectId}/entries/{entryId}/expiration
 PUT    /v1/projects/{projectId}/entries/{entryId}/password
 POST   /v1/projects/{projectId}/entries/{entryId}/rotate-address
 POST   /v1/projects/{projectId}/entries/{entryId}/report
+PUT    /v1/homepage                                                   update a multi-endpoint Collection
 ```
 
 Changing a password invalidates old passwords and cookies immediately. Password plaintext goes only to the loopback Agent, which stores a salted digest. Deleting or rotating an Endpoint must make its old address return 404.
