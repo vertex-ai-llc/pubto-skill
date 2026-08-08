@@ -13,7 +13,7 @@ Use the loopback Agent API at `http://127.0.0.1:8788`. Never publish the Agent A
 - An endpoint is one publication: one random 16-character slug, one target, one protocol, one Relay, and independent lifecycle/access settings.
 - Creating an endpoint publishes it immediately. Do not issue a second project-level publish action.
 - `http` targets may use `http://` or `https://`; `websocket` targets may use `ws://` or `wss://`; PostgreSQL, MySQL, Redis, SSH, MQTT, and other byte streams use `tcp`.
-- A `directory` target may be a folder or one file. A folder renders a safe file listing and never executes `index.html` automatically; use an `http` target pointed at a locally started web server for website behavior. Files over `maxFileBytes` (default 1 MiB) return 413.
+- A `directory` target may be a folder or one file. A folder renders a safe file listing and never executes `index.html` automatically. Choose the `website` source mode when the selected folder should serve `index.html` as an ordinary HTTP website; the Agent hosts it without requiring a local port, and Control/Relay still see protocol `http`. Files over `maxFileBytes` (default 1 MiB) return 413.
 
 ## Publish workflow
 
