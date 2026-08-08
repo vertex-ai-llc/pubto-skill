@@ -35,7 +35,8 @@ try {
     if ($null -eq $artifact) {
         throw "No compatible Pubto Desktop artifact is present in the release manifest."
     }
-    if ([Uri]$artifact.url).Scheme -ne "https" -or $artifact.sha256 -notmatch "^[0-9a-fA-F]{64}$" -or $artifact.packageType -notin @("nsis", "msi")) {
+    $artifactUri = [Uri]$artifact.url
+    if ($artifactUri.Scheme -ne "https" -or $artifact.sha256 -notmatch "^[0-9a-fA-F]{64}$" -or $artifact.packageType -notin @("nsis", "msi")) {
         throw "The selected Desktop artifact has invalid URL, checksum, or installer metadata."
     }
 
@@ -53,7 +54,7 @@ try {
 
     $extension = if ($artifact.packageType -eq "msi") { ".msi" } else { ".exe" }
     $packagePath = Join-Path $workDir ("Pubto-Setup" + $extension)
-    Invoke-WebRequest -UseBasicParsing -Uri ([Uri]$artifact.url) -OutFile $packagePath
+    Invoke-WebRequest -UseBasicParsing -Uri $artifactUri -OutFile $packagePath
     $actualSha = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actualSha -ne $artifact.sha256.ToLowerInvariant()) {
         throw "Pubto Desktop checksum verification failed."
