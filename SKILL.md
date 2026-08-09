@@ -21,7 +21,7 @@ scripts/install-desktop.sh --yes
 powershell -ExecutionPolicy Bypass -File scripts/install-desktop.ps1 -Yes
 ```
 
-The installers select the matching artifact from Pubto's HTTPS release manifest, require its SHA-256 checksum, preserve Desktop settings and local SQLite data, launch Pubto, and verify the ephemeral loopback Agent through its discovery record. Do not use `--yes` unless the user explicitly approved installation. Do not bypass macOS Gatekeeper, Windows UAC, or package signature warnings. If the manifest has no compatible signed artifact, report that publishing cannot start on that platform.
+The installers select the matching artifact from Pubto's HTTPS release manifest, require its SHA-256 checksum, preserve Desktop settings and local SQLite data, launch Pubto, and verify that the ephemeral loopback Agent reports the manifest version. A failed install or mismatched Agent restores the previous app and local data. Do not use `--yes` unless the user explicitly approved installation. Do not bypass macOS Gatekeeper, Windows UAC, or package signature warnings. If the manifest has no compatible artifact, report that publishing cannot start on that platform.
 
 ## Publish
 

@@ -7,15 +7,77 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-if (-not $IsWindows) {
+if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
     throw "This installer supports Windows. Use install-desktop.sh on macOS."
 }
-if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne [System.Runtime.InteropServices.Architecture]::X64) {
+$processArchitecture = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+if ($processArchitecture -notin @("AMD64", "x86_64")) {
     throw "Pubto Desktop currently supports Windows x64."
 }
 
 $workDir = Join-Path ([System.IO.Path]::GetTempPath()) ("pubto-install-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $workDir | Out-Null
+$rollbackArmed = $false
+$rollbackDone = $false
+$previousInstallRoot = $null
+$installedInstallRoot = $null
+$backupInstallRoot = Join-Path $workDir "previous-install"
+$backupConfigRoot = Join-Path $workDir "pubto-config"
+$backupTauriDataRoot = Join-Path $workDir "tauri-data"
+$configRoot = Join-Path $env:APPDATA "pubto"
+$tauriDataRoot = Join-Path $env:APPDATA "dev.pubto.desktop"
+
+function Find-PubtoInstall {
+    param([string]$PreferredRoot = "")
+    $candidates = @()
+    if ($PreferredRoot) { $candidates += $PreferredRoot }
+    $candidates += @(
+        (Join-Path $env:LOCALAPPDATA "Programs\Pubto"),
+        (Join-Path $env:ProgramFiles "Pubto"),
+        (Join-Path $env:LOCALAPPDATA "Pubto")
+    )
+    return $candidates | Select-Object -Unique | Where-Object {
+        Test-Path -LiteralPath (Join-Path $_ "Pubto.exe") -PathType Leaf
+    } | Select-Object -First 1
+}
+
+function Stop-PubtoProcesses {
+    Get-Process -Name "Pubto", "pubto-agent" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    foreach ($attempt in 1..20) {
+        $running = Get-Process -Name "Pubto", "pubto-agent" -ErrorAction SilentlyContinue
+        if (-not $running) { return }
+        Start-Sleep -Milliseconds 250
+    }
+    Get-Process -Name "Pubto", "pubto-agent" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+}
+
+function Copy-Directory {
+    param([string]$Source, [string]$Destination)
+    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    Get-ChildItem -LiteralPath $Source -Force | Copy-Item -Destination $Destination -Recurse -Force
+}
+
+function Restore-Previous {
+    if (-not $rollbackArmed -or $rollbackDone) { return }
+    $rollbackDone = $true
+    Stop-PubtoProcesses
+    $failedInstallRoot = Find-PubtoInstall $installedInstallRoot
+    if ($failedInstallRoot -and (Test-Path -LiteralPath $failedInstallRoot)) {
+        Remove-Item -LiteralPath $failedInstallRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if ($previousInstallRoot -and (Test-Path -LiteralPath $backupInstallRoot)) {
+        New-Item -ItemType Directory -Path (Split-Path -Parent $previousInstallRoot) -Force | Out-Null
+        Copy-Directory $backupInstallRoot $previousInstallRoot
+    }
+    if (Test-Path -LiteralPath $configRoot) { Remove-Item -LiteralPath $configRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-Path -LiteralPath $backupConfigRoot) { Copy-Directory $backupConfigRoot $configRoot }
+    if (Test-Path -LiteralPath $tauriDataRoot) { Remove-Item -LiteralPath $tauriDataRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-Path -LiteralPath $backupTauriDataRoot) { Copy-Directory $backupTauriDataRoot $tauriDataRoot }
+    $restoredApp = Find-PubtoInstall $previousInstallRoot
+    if ($restoredApp) { Start-Process -FilePath (Join-Path $restoredApp "Pubto.exe") }
+    Write-Warning "Pubto Desktop installation failed; the previous app and local data were restored."
+}
+
 try {
     $manifestPath = Join-Path $workDir "manifest.json"
     if (Test-Path -LiteralPath $Manifest -PathType Leaf) {
@@ -29,6 +91,10 @@ try {
     }
 
     $release = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    if ($release.schemaVersion -ne 1 -or [string]::IsNullOrWhiteSpace([string]$release.version) -or [string]$release.version -notmatch "^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$") {
+        throw "Invalid release manifest."
+    }
+    $releaseVersion = [string]$release.version
     $artifact = @($release.artifacts) | Where-Object {
         $_.component -eq "desktop" -and $_.os -eq "windows" -and $_.arch -eq "amd64"
     } | Select-Object -First 1
@@ -60,32 +126,46 @@ try {
         throw "Pubto Desktop checksum verification failed."
     }
 
+    Stop-PubtoProcesses
+    $previousInstallRoot = Find-PubtoInstall
+    if ($previousInstallRoot) {
+        Copy-Directory $previousInstallRoot $backupInstallRoot
+    }
+    if (Test-Path -LiteralPath $configRoot -PathType Container) {
+        Copy-Directory $configRoot $backupConfigRoot
+    }
+    if (Test-Path -LiteralPath $tauriDataRoot -PathType Container) {
+        Copy-Directory $tauriDataRoot $backupTauriDataRoot
+    }
+    $rollbackArmed = $true
+
     if ($artifact.packageType -eq "msi") {
-        $process = Start-Process -FilePath "msiexec.exe" -ArgumentList @("/i", $packagePath) -Wait -PassThru
+        $process = Start-Process -FilePath "msiexec.exe" -ArgumentList @("/i", $packagePath, "/qn", "/norestart") -Wait -PassThru
     } else {
-        $process = Start-Process -FilePath $packagePath -Wait -PassThru
+        $process = Start-Process -FilePath $packagePath -ArgumentList @("/S") -Wait -PassThru
     }
     if ($process.ExitCode -ne 0) {
         throw "Pubto Desktop installer exited with code $($process.ExitCode)."
     }
 
-    $candidateApps = @(
-        (Join-Path $env:LOCALAPPDATA "Programs\Pubto\Pubto.exe"),
-        (Join-Path $env:ProgramFiles "Pubto\Pubto.exe")
-    )
-    $desktopApp = $candidateApps | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-    if ($desktopApp) { Start-Process -FilePath $desktopApp }
+    $installedInstallRoot = Find-PubtoInstall
+    if (-not $installedInstallRoot) { throw "Pubto.exe was not found in a supported installation directory." }
+    $desktopApp = Join-Path $installedInstallRoot "Pubto.exe"
+    Start-Process -FilePath $desktopApp
 
-    $discovery = Join-Path $env:APPDATA "pubto\agent-discovery.json"
-    foreach ($attempt in 1..30) {
+    $discovery = Join-Path $configRoot "agent-discovery.json"
+    foreach ($attempt in 1..60) {
         if (Test-Path -LiteralPath $discovery -PathType Leaf) {
             try {
                 $agent = Get-Content -LiteralPath $discovery -Raw | ConvertFrom-Json
                 $agentUri = [Uri]$agent.url
-                if ($agentUri.Scheme -eq "http" -and $agentUri.Host -in @("127.0.0.1", "localhost", "[::1]")) {
-                    Invoke-RestMethod -Method Get -Uri ($agent.url.TrimEnd("/") + "/v1/health") | Out-Null
-                    Write-Host "Pubto Desktop is installed and its local Agent is ready."
-                    return
+                if ($agentUri.Scheme -eq "http" -and $agentUri.Port -gt 0 -and $agentUri.Host -in @("127.0.0.1", "localhost", "::1")) {
+                    $health = Invoke-RestMethod -Method Get -Uri ($agentUri.AbsoluteUri.TrimEnd("/") + "/v1/health")
+                    if ($health.status -eq "ok" -and $health.component -eq "pubto-agent" -and $health.version -eq $releaseVersion) {
+                        $rollbackArmed = $false
+                        Write-Host "Pubto Desktop is installed and its local Agent is ready."
+                        return
+                    }
                 }
             } catch {
                 # Retry while Desktop starts and rewrites discovery atomically.
@@ -93,7 +173,12 @@ try {
         }
         Start-Sleep -Seconds 1
     }
-    throw "Pubto Desktop was installed, but the local Agent did not become ready within 30 seconds."
+    throw "Pubto Desktop was installed, but the local Agent did not become ready within 60 seconds."
+} catch {
+    if ($rollbackArmed) {
+        Restore-Previous
+    }
+    throw
 } finally {
     Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
 }
