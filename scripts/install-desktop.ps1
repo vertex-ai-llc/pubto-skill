@@ -2,7 +2,8 @@
 param(
     [string]$Manifest = "https://pubto.dev/downloads/manifest.json",
     [switch]$Yes,
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$Check
 )
 
 $ErrorActionPreference = "Stop"
@@ -26,6 +27,33 @@ $backupConfigRoot = Join-Path $workDir "pubto-config"
 $backupTauriDataRoot = Join-Path $workDir "tauri-data"
 $configRoot = Join-Path $env:APPDATA "pubto"
 $tauriDataRoot = Join-Path $env:APPDATA "dev.pubto.desktop"
+$installPhase = "manifest"
+$releaseVersion = ""
+$installerLogPath = Join-Path $workDir "msi-install.log"
+
+function Write-InstallerDiagnostic {
+    $definitions = @{
+        manifest = @("windows_manifest_failed", "Windows installation could not load the release manifest")
+        download = @("windows_download_failed", "Windows installation could not download the selected package")
+        checksum = @("windows_checksum_failed", "Windows installation rejected the package checksum")
+        backup = @("windows_backup_failed", "Windows installation could not back up the previous installation")
+        package = @("windows_package_failed", "The Windows installer package returned an error")
+        launch = @("windows_app_launch_failed", "Windows installation completed but Desktop could not be started")
+        agent_health = @("windows_agent_health_failed", "Windows installation completed but the local Agent did not become ready")
+    }
+    $definition = $definitions[$installPhase]
+    if (-not $definition) { $definition = $definitions["package"] }
+    New-Item -ItemType Directory -Path $configRoot -Force | Out-Null
+    @{
+        code = $definition[0]
+        occurredAt = (Get-Date).ToUniversalTime().ToString("o")
+    } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $configRoot "installer-diagnostic.json") -Encoding UTF8
+    if (Test-Path -LiteralPath $installerLogPath -PathType Leaf) {
+        $logRoot = Join-Path $configRoot "installer-logs"
+        New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
+        Copy-Item -LiteralPath $installerLogPath -Destination (Join-Path $logRoot "latest-msi.log") -Force
+    }
+}
 
 function Find-PubtoInstall {
     param([string]$PreferredRoot = "")
@@ -108,6 +136,25 @@ try {
 
     Write-Host "Pubto Desktop: Windows x64"
     Write-Host "Package: $($artifact.url)"
+    if ($Check) {
+        $discovery = Join-Path $configRoot "agent-discovery.json"
+        if (Test-Path -LiteralPath $discovery -PathType Leaf) {
+            try {
+                $agent = Get-Content -LiteralPath $discovery -Raw | ConvertFrom-Json
+                $agentUri = [Uri]$agent.url
+                if ($agentUri.Scheme -eq "http" -and $agentUri.Port -gt 0 -and $agentUri.Host -in @("127.0.0.1", "localhost", "::1")) {
+                    $health = Invoke-RestMethod -Method Get -Uri ($agentUri.AbsoluteUri.TrimEnd("/") + "/v1/health")
+                    if ($health.status -eq "ok" -and $health.component -eq "pubto-agent") {
+                        if ([string]$health.version -eq $releaseVersion) { Write-Host "Pubto Desktop is up to date ($releaseVersion)." }
+                        else { Write-Host "Pubto Desktop update available: $releaseVersion (installed $($health.version))." }
+                        return
+                    }
+                }
+            } catch { }
+        }
+        Write-Host "Pubto Desktop is not installed or its local Agent is not running."
+        return
+    }
     if ($DryRun) {
         Write-Host "Dry run complete; no package was downloaded or installed."
         return
@@ -118,14 +165,17 @@ try {
         if ($answer -notin @("y", "Y")) { return }
     }
 
+    $installPhase = "download"
     $extension = if ($artifact.packageType -eq "msi") { ".msi" } else { ".exe" }
     $packagePath = Join-Path $workDir ("Pubto-Setup" + $extension)
     Invoke-WebRequest -UseBasicParsing -Uri $artifactUri -OutFile $packagePath
+    $installPhase = "checksum"
     $actualSha = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actualSha -ne $artifact.sha256.ToLowerInvariant()) {
         throw "Pubto Desktop checksum verification failed."
     }
 
+    $installPhase = "backup"
     Stop-PubtoProcesses
     $previousInstallRoot = Find-PubtoInstall
     if ($previousInstallRoot) {
@@ -139,8 +189,9 @@ try {
     }
     $rollbackArmed = $true
 
+    $installPhase = "package"
     if ($artifact.packageType -eq "msi") {
-        $process = Start-Process -FilePath "msiexec.exe" -ArgumentList @("/i", $packagePath, "/qn", "/norestart") -Wait -PassThru
+        $process = Start-Process -FilePath "msiexec.exe" -ArgumentList @("/i", $packagePath, "/qn", "/norestart", "/l*v", $installerLogPath) -Wait -PassThru
     } else {
         $process = Start-Process -FilePath $packagePath -ArgumentList @("/S") -Wait -PassThru
     }
@@ -148,11 +199,13 @@ try {
         throw "Pubto Desktop installer exited with code $($process.ExitCode)."
     }
 
+    $installPhase = "launch"
     $installedInstallRoot = Find-PubtoInstall
     if (-not $installedInstallRoot) { throw "Pubto.exe was not found in a supported installation directory." }
     $desktopApp = Join-Path $installedInstallRoot "Pubto.exe"
     Start-Process -FilePath $desktopApp
 
+    $installPhase = "agent_health"
     $discovery = Join-Path $configRoot "agent-discovery.json"
     foreach ($attempt in 1..60) {
         if (Test-Path -LiteralPath $discovery -PathType Leaf) {
@@ -175,10 +228,12 @@ try {
     }
     throw "Pubto Desktop was installed, but the local Agent did not become ready within 60 seconds."
 } catch {
+    $failure = $_
     if ($rollbackArmed) {
         Restore-Previous
     }
-    throw
+    try { Write-InstallerDiagnostic } catch { Write-Warning "Could not preserve the installer diagnostic marker." }
+    throw $failure
 } finally {
     Remove-Item -LiteralPath $workDir -Recurse -Force -ErrorAction SilentlyContinue
 }
