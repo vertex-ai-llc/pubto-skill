@@ -5,9 +5,10 @@ manifest_url="${PUBTO_RELEASE_MANIFEST:-https://pubto.dev/downloads/manifest.jso
 manifest_file=""
 assume_yes=false
 dry_run=false
+check_only=false
 
 usage() {
-  printf '%s\n' 'usage: install-desktop.sh [--manifest URL|FILE] [--yes] [--dry-run]'
+  printf '%s\n' 'usage: install-desktop.sh [--manifest URL|FILE] [--yes] [--dry-run] [--check]'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -22,6 +23,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --dry-run)
       dry_run=true
+      shift
+      ;;
+    --check)
+      check_only=true
       shift
       ;;
     --help|-h)
@@ -143,6 +148,31 @@ fi
 
 printf 'Pubto Desktop: macOS %s\n' "$architecture"
 printf 'Package: %s\n' "$artifact_url"
+if [[ "$check_only" == true ]]; then
+  discovery="$HOME/Library/Application Support/pubto/agent-discovery.json"
+  if [[ -f "$discovery" ]]; then
+    agent_url=$(/usr/bin/plutil -extract url raw "$discovery" 2>/dev/null || true)
+    if [[ "$agent_url" =~ ^http://(127\.0\.0\.1|localhost|\[::1\]):[0-9]+/?$ ]]; then
+      health=$(/usr/bin/curl --fail --silent "${agent_url%/}/v1/health" 2>/dev/null || true)
+      if /usr/bin/osascript -l JavaScript - "$release_version" "$health" <<'JXA' >/dev/null 2>&1
+function run(argv) {
+  const object = JSON.parse(argv[1]);
+  if (object.status !== 'ok' || object.component !== 'pubto-agent') throw new Error('agent unavailable');
+  if (object.version === argv[0]) return 'up-to-date';
+  throw new Error('update available');
+}
+JXA
+      then
+        printf 'Pubto Desktop is up to date (%s).\n' "$release_version"
+      else
+        printf 'Pubto Desktop update available: %s.\n' "$release_version"
+      fi
+      exit 0
+    fi
+  fi
+  printf '%s\n' 'Pubto Desktop is not installed or its local Agent is not running.'
+  exit 0
+fi
 if [[ "$dry_run" == true ]]; then
   printf '%s\n' 'Dry run complete; no package was downloaded or installed.'
   exit 0
