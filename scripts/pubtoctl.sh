@@ -37,6 +37,19 @@ case "$command" in
     kind="${4:?kind required: http|directory|website|tcp|websocket}"
     target="${5:?target required}"
     relay_id="${6:-default}"
+    client_key="${7:-}"
+    if [[ -z "$client_key" ]]; then
+      client_key=$(node -e 'const c=require("crypto");process.stdout.write("skill-"+c.createHash("sha256").update(process.argv[1]+"\0"+process.argv[2]).digest("hex").slice(0,20))' "$kind" "$target")
+    fi
+    payload=$(node -e 'process.stdout.write(JSON.stringify({name:process.argv[1],kind:process.argv[2],target:process.argv[3],relayId:process.argv[4],clientKey:process.argv[5]}))' "$name" "$kind" "$target" "$relay_id" "$client_key")
+    exec curl -fsS -X POST "$api/v1/projects/$project_id/entries" -H 'content-type: application/json' --data "$payload"
+    ;;
+  publish-new)
+    project_id="${2:?project id required}"
+    name="${3:?endpoint name required}"
+    kind="${4:?kind required: http|directory|website|tcp|websocket}"
+    target="${5:?target required}"
+    relay_id="${6:-default}"
     payload=$(node -e 'process.stdout.write(JSON.stringify({name:process.argv[1],kind:process.argv[2],target:process.argv[3],relayId:process.argv[4]}))' "$name" "$kind" "$target" "$relay_id")
     exec curl -fsS -X POST "$api/v1/projects/$project_id/entries" -H 'content-type: application/json' --data "$payload"
     ;;
@@ -47,12 +60,8 @@ case "$command" in
     entry_ids="${5:?comma-separated entry ids required}"
     payload=$(node -e 'process.stdout.write(JSON.stringify({name:process.argv[1],description:process.argv[2],entryIds:process.argv[3].split(",").map((id)=>id.trim()).filter(Boolean)}))' "$name" "$description" "$entry_ids")
     curl -fsS -X PUT "$api/v1/homepage" -H 'content-type: application/json' --data "$payload" >/dev/null
-    project_json=$(curl -fsS "$api/v1/projects/$project_id")
-    if ! node -e 'const p=JSON.parse(process.argv[1]);process.exit((p.entries||[]).some((e)=>e.target==="pubto://homepage")?0:1)' "$project_json"; then
-      curl -fsS -X POST "$api/v1/projects/$project_id/entries" -H 'content-type: application/json' --data '{"name":"Collection","kind":"http","target":"pubto://homepage","relayId":"default"}'
-    else
-      printf '%s\n' "$project_json"
-    fi
+    collection_payload=$(node -e 'process.stdout.write(JSON.stringify({name:"Collection",kind:"http",target:"pubto://homepage",relayId:"default",clientKey:"collection:"+process.argv[1]}))' "$project_id")
+    exec curl -fsS -X POST "$api/v1/projects/$project_id/entries" -H 'content-type: application/json' --data "$collection_payload"
     ;;
   start|stop|rotate|delete-entry)
     project_id="${2:?project id required}"
@@ -70,15 +79,30 @@ case "$command" in
     payload=$(node -e 'process.stdout.write(JSON.stringify({expiresAt:process.argv[1]}))' "$expires_at")
     exec curl -fsS -X PUT "$api/v1/projects/$project_id/entries/$entry_id/expiration" -H 'content-type: application/json' --data "$payload"
     ;;
+  remark|clear-remark)
+    project_id="${2:?project id required}"
+    entry_id="${3:?entry id required}"
+    text="${4:-}"
+    if [[ "$command" == "remark" && -z "$text" ]]; then
+      printf '%s\n' 'remark text required' >&2
+      exit 2
+    fi
+    [[ "$command" == "clear-remark" ]] && text=""
+    payload=$(node -e 'process.stdout.write(JSON.stringify({remark:process.argv[1]}))' "$text")
+    exec curl -fsS -X PUT "$api/v1/projects/$project_id/entries/$entry_id/remark" -H 'content-type: application/json' --data "$payload"
+    ;;
   *)
     printf '%s\n' \
       'usage:' \
       '  pubtoctl.sh health|capabilities|projects|relays|bindings' \
       '  pubtoctl.sh create-project NAME' \
-      '  pubtoctl.sh publish PROJECT_ID NAME KIND TARGET [RELAY_ID]' \
+      '  pubtoctl.sh publish PROJECT_ID NAME KIND TARGET [RELAY_ID] [CLIENT_KEY]' \
+      '  pubtoctl.sh publish-new PROJECT_ID NAME KIND TARGET [RELAY_ID]' \
       '  pubtoctl.sh collection PROJECT_ID NAME DESCRIPTION ENTRY_ID[,ENTRY_ID...]' \
       '  pubtoctl.sh start|stop|rotate|delete-entry PROJECT_ID ENTRY_ID' \
-      '  pubtoctl.sh expire-30m PROJECT_ID ENTRY_ID' >&2
+      '  pubtoctl.sh expire-30m PROJECT_ID ENTRY_ID' \
+      '  pubtoctl.sh remark PROJECT_ID ENTRY_ID TEXT' \
+      '  pubtoctl.sh clear-remark PROJECT_ID ENTRY_ID' >&2
     exit 2
     ;;
 esac
