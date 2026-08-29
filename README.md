@@ -4,15 +4,28 @@
 HTTP, HTTPS, WebSocket, TCP, file, directory, or website target through the
 user's signed-in Pubto Desktop Agent.
 
+## Quick install prompt
+
+Paste this one line into your AI CLI's native Skill installer:
+
+```text
+Install or update the official Pubto Skill from https://github.com/vertex-ai-llc/pubto-skill.
+```
+
+The host AI CLI applies the installation and update rules in `SKILL.md`. The
+Skill checks the local CLI, Desktop Agent, login state, and managed version
+before publishing; it never grants anonymous access or handles infrastructure
+credentials.
+
 ## Install paths
 
 All paths install the same versioned Skill and use the same Pubto CLI and
 Desktop Agent:
 
 1. **Install from Desktop:** open **With AI** and install the detected integration.
-2. **Ask your AI CLI:** paste [`INSTALL-PROMPT.md`](INSTALL-PROMPT.md). The host's
-   native Skill installer downloads this repository and asks before installing
-   a missing Desktop or CLI.
+2. **Ask your AI CLI:** paste the one-line prompt above. The host's native Skill
+   installer downloads this repository and asks before installing a missing
+   Desktop or CLI.
 3. **Copy from GitHub:** copy this repository's `pubto-publish` directory into the AI CLI's standard
    user Skill directory. On first use the Skill checks the CLI, Agent and
    login state, and asks before completing the official installation flow.
