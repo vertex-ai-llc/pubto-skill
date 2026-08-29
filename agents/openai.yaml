@@ -1,4 +1,4 @@
 interface:
   display_name: "Pubto Publish"
-  short_description: "Publish and manage local services through Pubto"
-  default_prompt: "Use $pubto-publish to publish or map a local service through Pubto and verify the result."
+  short_description: "Publish and manage local endpoints"
+  default_prompt: "Use $pubto-publish to publish this local endpoint and report its public URL."
