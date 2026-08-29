@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-manifest_url="${PUBTO_RELEASE_MANIFEST:-https://pubto.dev/downloads/manifest.json}"
+manifest_url="${PUBTO_RELEASE_MANIFEST:-https://raw.githubusercontent.com/vertex-ai-llc/pubto-downloads/main/manifest.json}"
 manifest_file=""
 assume_yes=false
 dry_run=false
