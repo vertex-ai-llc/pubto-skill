@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Manifest = "https://pubto.dev/downloads/manifest.json",
+    [string]$Manifest = "https://raw.githubusercontent.com/vertex-ai-llc/pubto-downloads/main/manifest.json",
     [switch]$Yes,
     [switch]$DryRun,
     [switch]$Check
