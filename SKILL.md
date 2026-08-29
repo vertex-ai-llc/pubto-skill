@@ -1,131 +1,200 @@
 ---
 name: pubto-publish
-description: Publish, inspect, verify, edit, expire, stop, rotate, and remove local HTTP/HTTPS, WS/WSS, file, safe directory, static website, or TCP endpoints through Pubto. Use when an AI needs to preview a local project, expose a port or API, share a document, choose a Relay, map a remote endpoint to localhost, diagnose an unavailable Pubto publication, or troubleshoot browser CORS and preflight failures.
+description: Publish and manage local HTTP/HTTPS, WebSocket, TCP, file, directory, and website endpoints through the user's running Pubto Desktop Agent. Use when an AI agent needs to expose a local project, inspect Networks, return a public URL and QR link, stop/delete/rotate an endpoint, or guide the user through Desktop login, Skill installation, and update checks.
 ---
 
 # Pubto Publish
 
-Use the installed `pubto` CLI first. It discovers the running Desktop Agent's ephemeral loopback address automatically. If the CLI is unavailable, use `scripts/pubtoctl.sh`, which reads the same discovery record. Never publish the Agent API itself.
+Use the local `pubto` binary first. It talks only to the loopback Desktop Agent
+discovered from the platform discovery record. It never deploys servers, calls a
+Relay/Worker directly, or accepts a Control password/token.
 
-## Install and update Pubto
+The same bundle is distributed from the project source, Pubto Desktop, and the
+public repository `https://github.com/vertex-ai-llc/pubto-skill`. A host AI
+tool may install it in its own standard user Skill directory. Installation and
+updates must be explicit, versioned, atomic, and limited to Pubto-managed
+files; never overwrite unrelated user files.
 
-Use one of the official channels below. They all install the same Desktop UI, bundled local Agent, and matching `pubto` CLI; do not install a second Agent from a package manager.
+## Install or update from inside an AI CLI
 
-- **Desktop download (recommended):** open `https://pubto.dev/downloads`, download the macOS DMG or Windows x64 installer, and launch Pubto. The first-run With AI guide can install the CLI for the current user. macOS installs the CLI at `~/.local/bin/pubto`; Windows installs it at `%LOCALAPPDATA%\\Pubto\\bin` and adds that directory to the user's PATH.
-- **Homebrew (macOS):** after the `vertex-ai-llc/pubto` release is published, run `brew tap vertex-ai-llc/pubto` and `brew install --cask pubto`. The Cask downloads the signed DMG from the public `vertex-ai-llc/pubto-downloads` release; Homebrew is not a build system for Pubto.
-- **Standalone CLI:** use the platform package shown under **CLI** on the downloads page when a GUI is not wanted. Keep the CLI and Desktop on the same release version so the local Agent API remains compatible.
+This section is an instruction for the host AI CLI, not a shell command for a
+user to paste into a system terminal. When a user supplies the official
+installation prompt or asks to install Pubto, use the host's native Skill
+installer to fetch only the public repository above. Do not download a Skill
+from an arbitrary URL and do not print or request Control, Relay, Worker,
+Cloudflare, or application credentials.
 
-The public Skill repository is `https://github.com/vertex-ai-llc/pubto-skill`. Install it only into the tool you actually use; installing it in one tool does not enable another tool. To update, pull or clone the repository again into the same managed directory, or use Desktop's **With AI** page. To uninstall, remove only the `pubto-publish` directory that was created by Pubto; never remove a user-owned directory that lacks Pubto's managed marker.
+On first use, perform these checks in order:
 
-| Tool | Skill directory |
-| --- | --- |
-| Codex CLI | `~/.codex/skills/pubto-publish` |
-| Claude Code | `~/.claude/skills/pubto-publish` |
-| OpenCode | `~/.config/opencode/skills/pubto-publish` |
-| Grok CLI | `~/.grok/skills/pubto-publish` |
-| pi coding agent | `~/.pi/agent/skills/pubto-publish` |
+1. Check whether this Skill is already present and read its
+   `.pubto-managed.json` marker or version metadata. If the installed version
+   is current, continue without downloading it again.
+2. If the host supports a native remote-version check, check at most once per
+   24 hours unless the user explicitly asks to update. A newer version may be
+   installed only after telling the user what will change and receiving
+   confirmation. Write to a temporary directory, validate the expected Skill
+   files/version, and atomically replace only the old Pubto-managed directory;
+   on failure keep the old version.
+3. Check `pubto status` and the Agent discovery record. If the CLI or Desktop
+   Agent is missing, tell the user exactly what is missing and ask for
+   confirmation before using the official Pubto release installer. If Desktop
+   is present but stopped, ask the user to start it. If the Agent is not signed
+   in, ask the user to finish sign-in in Desktop. Publishing anonymously is not
+   allowed.
+4. After setup, run `pubto networks`, select a healthy Network, and use the
+   normal publishing rules below. The Skill and the Desktop-installed bundle
+   use the same CLI/Agent lifecycle for both Simple and CF Networks.
 
-Gemini CLI and Qwen Code use the `/pubto` managed command written by Desktop, not a second transport or Agent.
+If a user manually copied this file from GitHub, the file itself cannot
+silently install an app, CLI, or another Skill. The host AI CLI must perform
+the checks above; if it has no native installer, show the official repository
+and target directory and ask the user to copy it. Never replace a directory
+that lacks the Pubto managed marker.
 
-## Desktop bootstrap
+## Preconditions
 
-If Pubto Desktop is missing, tell the user that publishing requires the local Desktop Agent and ask for confirmation before installing anything. After confirmation, use the platform installer bundled with this skill:
+1. Detect the Agent without changing the machine:
 
-```sh
-# macOS Apple Silicon or Intel
-scripts/install-desktop.sh --yes
-```
+   ~~~sh
+   test -f "$HOME/Library/Application Support/pubto/agent-discovery.json" && cat "$HOME/Library/Application Support/pubto/agent-discovery.json"
+   pubto status
+   ~~~
 
-```powershell
-# Windows x64
-powershell -ExecutionPolicy Bypass -File scripts/install-desktop.ps1 -Yes
-```
+   On Linux use the user's XDG config directory (usually $HOME/.config/pubto/agent-discovery.json). On Windows use %AppData%\\pubto\\agent-discovery.json. The record must contain an http loopback URL. Never use a Control URL as the Agent URL.
 
-To check without changing the machine, run the same installer with `--check` on macOS or `-Check` on Windows. It reads the signed release manifest, detects the local Agent through the ephemeral discovery record, and reports whether Desktop is absent, current, or on an older release. When an update is available, rerun the installer with explicit user confirmation (`--yes` or `-Yes`); the installer verifies the checksum, preserves local data, and performs a rollback if the new app or Agent is unhealthy.
+2. If the Agent is missing, tell the user that publishing requires Pubto Desktop and ask for confirmation before installing or updating it. This project skill does not silently download an installer. After explicit confirmation, use the signed Desktop release flow configured by the host product; verify the SHA-256 manifest, preserve the Agent SQLite state, launch Desktop, then run pubto status and pubto networks again. Do not bypass Gatekeeper, UAC, or package-signature warnings.
 
-The installers select the matching artifact from Pubto's HTTPS release manifest, require its SHA-256 checksum, preserve Desktop settings and local SQLite data, launch Pubto, and verify that the ephemeral loopback Agent reports the manifest version. A failed install or mismatched Agent restores the previous app and local data. Do not use `--yes` unless the user explicitly approved installation. Do not bypass macOS Gatekeeper, Windows UAC, or package signature warnings. If the manifest has no compatible artifact, report that publishing cannot start on that platform.
+3. Check capabilities before selecting a source:
 
-## Publish
+   ~~~sh
+   curl --fail --silent http://127.0.0.1:<discovered-port>/v1/capabilities
+   ~~~
 
-Choose exactly one source:
+   The response is authoritative for the running Desktop build. Never publish
+   the Agent API itself. A capability being listed does not make an unhealthy
+   Network usable; `pubto networks` must also report a live, healthy Network.
 
-```sh
-pubto publish --port 3000 --name Frontend --key frontend --duration 30m
-pubto publish --url https://127.0.0.1:8443
-pubto publish --ws-port 8998
-pubto publish --tcp 5432
-pubto publish --file ./report.docx
-pubto publish --dir ./documents
-pubto publish --website ./dist
-```
+## Choose a Network
 
-Treat a Project as a name-only group. Each Endpoint has one independent random address, target, Relay, lifecycle, password, expiry, and quota policy. Creation publishes immediately; do not issue a second project-level publish action. Reuse the first suitable Project unless the user asks for another.
+Run `pubto networks` and select an item whose status is healthy/active. When a
+Deployment exposes multiple Networks, pass the selected Network ID explicitly
+with `--network-id` (or its `--network` alias). Do not invent a Relay,
+Attachment, hostname, or Network ID. The Agent owns Control authentication and
+asks Control to choose a healthy Attachment/Relay within the selected Network.
 
-Publishing is idempotent by default. The CLI derives a stable `clientKey` from the protocol and target, so repeating the same command in the same Project reuses the existing `endpointId`, slug, and public address. Pass an explicit stable `--key` such as `frontend` when the logical Endpoint may move to another port or target; the same Project and key updates that Endpoint instead of creating a duplicate. Use `--new` only when the user explicitly wants another public address. Treat the returned `endpointId` as the authoritative identifier for later commands.
+## Publish exactly one source
 
-Use HTTP for HTTP/HTTPS targets, WebSocket for WS/WSS targets, and TCP for PostgreSQL, MySQL, Redis, SSH, MQTT, and other byte streams. Use `--dir` for a safe file listing that never executes `index.html`; use `--website` when a selected folder should serve `index.html`. Published files open in the visitor's public browser Viewer; unsupported formats remain downloadable.
+~~~sh
+pubto publish --port 3000 --network-id simple-network-001 --name Frontend --key frontend --duration 30m
+pubto publish --url https://127.0.0.1:8443 --network-id simple-network-001
+pubto publish --ws-port 8998 --network-id simple-network-001
+pubto publish --tcp 5432 --network-id simple-network-001
+pubto publish --file ./report.docx --network-id simple-network-001
+pubto publish --dir ./documents --network-id simple-network-001
+pubto publish --website ./dist --network-id simple-network-001
+~~~
 
-After creation, read the returned Endpoint until it reports `running`, a `publicUrl`, and its reachability state. Verify with a read-only protocol-appropriate request without application credentials, then report the exact public address.
+Pass exactly one of `--port`, `--ws-port`, `--tcp`, `--url`, `--file`, `--dir`,
+`--website`, or `--kind/--target`. Ask before publishing databases, SSH,
+caches, admin panels, LAN targets, or public Internet targets. Prefer a short
+duration for temporary or sensitive endpoints.
 
-## Collections
+Publishing is idempotent. The CLI derives a stable clientKey from protocol, target, and Network. For a logical endpoint that may move ports, provide an explicit stable --key (for example frontend); repeating the same Project and key updates/reuses the same endpointId and slug. Use --new only when the user asks for a new public address. The CLI treats a different endpointId returned for an existing key as an idempotency failure and removes only the duplicate produced by that request.
 
-When someone needs to share several endpoints, files, or directories as one handoff, create a Collection inside the selected Project. A Collection is a generated public page containing multiple existing Endpoint links; it is not another transport or another copy of an Endpoint. Ask for a name, optional description, and the Endpoint IDs to include, then update `PUT /v1/homepage` with `{name,description,entryIds}` and publish the special `pubto://homepage` Endpoint in that Project if it does not already exist. The Desktop calls this action `New collection`; do not describe or add a separate `Publish Page` step.
+A successful response contains `endpointId`, the canonical 16-character slug,
+`publicUrl`, Network metadata, Control publication identifiers, and expiry
+fields when present. `controlGrantId` is an authorization grant, not an
+Attachment ID; do not relabel it as `attachmentId`. The loopback Entry response
+does not expose the private Attachment ID. Simple and CF use this exact same
+CLI and Agent lifecycle; `networkKind` is output metadata, not a client-side
+transport switch.
 
-## Browser APIs and CORS
+For TCP, `publicUrl` is the canonical `tcp://` address returned by Control.
+Return and accept that exact `tcp://` address for user-facing TCP operations;
+do not rewrite it to `https://`, a Relay/Gateway address, or a `/tcp` URL. The
+Desktop Agent may use WSS internally to bridge the byte stream to a local TCP
+mapping, but that implementation detail is not a replacement public address.
 
-Do not equate a reachable public URL or an HTTP 200 response with browser compatibility. For a browser API, identify the exact frontend Origin (scheme, host, and port), request URL, method, and non-simple request headers. If the frontend and API have the same public Origin, the browser has no CORS boundary: an application error such as `cross-origin writes are not allowed` means the source's CSRF/Origin guard does not trust its configured public Origin. Fix that source allowlist without enabling wildcard CORS.
+After publishing, read `pubto list` until the endpoint is running and has a
+non-empty `publicUrl`. Report the exact URL, Network, returned Control
+identifiers, and expiry. Verify the address with a read-only,
+protocol-appropriate request. For TCP, preserve the returned `tcp://` address
+and verify the Desktop mapping rather than opening it in a browser. Do not
+claim success from a local Agent 2xx alone if the endpoint has no public URL or
+is unreachable.
 
-If the frontend and API Origins differ, run the read-only preflight check before asking the user to change code:
+## Lifecycle operations
 
-```sh
-scripts/check-cors.sh https://PUBLIC_HOST/api/resource https://app.example.test POST 'content-type,authorization'
-```
-
-The check sends `OPTIONS` with `Origin`, `Access-Control-Request-Method`, and (when supplied) `Access-Control-Request-Headers`. Confirm that the response is a successful 2xx preflight and that:
-
-- `Access-Control-Allow-Origin` exactly matches the trusted Origin, or is `*` only for non-credentialed public reads;
-- `Access-Control-Allow-Methods` contains the requested method;
-- `Access-Control-Allow-Headers` contains each requested header;
-- `Access-Control-Allow-Credentials: true` is present only when the application intentionally uses cookies or other credentialed browser requests.
-
-If the tunnel returns an application JSON `4xx/5xx`, or `OPTIONS` is rejected by the source, report that the tunnel is working and the source program's CORS/CSRF policy is the fix point. Configure the source with an explicit Origin allowlist and a dedicated `OPTIONS` handler. Do not make Pubto strip or forge `Origin`, reflect arbitrary Origins, or add `Access-Control-Allow-Origin: *` by default: that can turn a protected write API into a cross-site request surface. With cookies, `*` is invalid and a permissive reflected Origin creates CSRF risk; require authentication, CSRF protection, and short-lived or password-protected publications where appropriate.
-
-For WebSocket endpoints, CORS headers do not authorize the upgrade. Check the source's `Origin` allowlist and the `101 Switching Protocols` handshake separately. TCP endpoints have no browser CORS layer and must be treated as raw public sockets.
-
-## Operate
-
-```sh
-pubto status
+~~~sh
 pubto list
-pubto start --endpoint ENTRY_ID
-pubto stop --endpoint ENTRY_ID
-pubto delete --endpoint ENTRY_ID
-pubto remark --endpoint ENTRY_ID --text "Review build for the mobile team"
-pubto remark --endpoint ENTRY_ID --clear
-```
+pubto status
+pubto start --endpoint <endpoint-id>
+pubto stop --endpoint <endpoint-id>
+pubto rotate --endpoint <endpoint-id>
+pubto delete --endpoint <endpoint-id>
+pubto remark --endpoint <endpoint-id> --text "Review build"
+pubto remark --endpoint <endpoint-id> --clear
+~~~
 
-Use `scripts/pubtoctl.sh` or the typed loopback API described by `GET /v1/capabilities` for advanced operations:
+Use the returned `endpointId`, not the slug or URL, for later actions. `stop`
+pauses traffic while retaining the endpoint; `delete` revokes it and should
+make the old address return 404; `rotate` keeps the logical endpoint but
+replaces its public address. Treat delete/rotate as destructive and confirm
+when the endpoint is not clearly temporary. Remarks are public metadata and
+must not contain credentials, tokens, private paths, or internal notes.
 
-```text
-PUT    /v1/projects/{projectId}/entries/{entryId}                  edit name, kind, target, relayId
-DELETE /v1/projects/{projectId}/entries/{entryId}                  revoke and delete
-POST   /v1/projects/{projectId}/entries/{entryId}/start|stop
-PUT    /v1/projects/{projectId}/entries/{entryId}/expiration
-PUT    /v1/projects/{projectId}/entries/{entryId}/password
-PUT    /v1/projects/{projectId}/entries/{entryId}/remark              public recipient note, up to 500 characters
-POST   /v1/projects/{projectId}/entries/{entryId}/rotate-address
-POST   /v1/projects/{projectId}/entries/{entryId}/report
-PUT    /v1/homepage                                                   update a multi-endpoint Collection
-```
+For a multi-endpoint handoff, use the Desktop Collection/Homepage feature; a Collection is a page of existing Endpoint links, not another transport or a second publish operation.
 
-Changing a password invalidates old passwords and cookies immediately. Password plaintext goes only to the loopback Agent, which stores a salted digest. Deleting or rotating an Endpoint must make its old address return 404.
+## Login and QR handoff
 
-Use an Endpoint remark for context recipients should see after saving the Pub. Remarks are public metadata; never place credentials, private file paths, tokens, or internal-only notes in them. Creating an Endpoint does not require a remark, and normal Desktop creation never asks for one.
+The Agent owns account authentication. Do not ask an AI agent to store or print Control passwords. Check pubto status for accountAuthenticated; if false, direct the user to the running Desktop login screen and wait for them to finish. The loopback account routes are available to the Desktop UI:
 
-## Safety
+~~~text
+GET  /v1/account
+POST /v1/account/code       {"email":"user@example.com"}
+POST /v1/account/verify     {"email":"user@example.com","code":"123456"}
+POST /v1/account/login      {"email":"user@example.com","password":"..."}
+POST /v1/account/logout
+~~~
 
-- Ask before publishing databases, caches, SSH, admin panels, LAN targets, or public Internet targets.
-- Prefer a 30-minute duration for sensitive temporary Endpoints.
-- Never print Relay, Control, Cloudflare, database, or application secrets.
-- Treat TCP public addresses as raw sockets, not browser URLs.
-- Delete a temporary Endpoint when the requested use is complete.
+Only send a password when the user explicitly supplies it; prefer the email-code flow. Never expose the code or password in logs. After login, rerun pubto networks before publishing.
+
+When a successful HTTP/WebSocket publish returns publicUrl, show it as a normal
+link and as a QR value using the host's QR renderer (for example, the Desktop
+QR dialog). The QR value is exactly the returned URL; do not put passwords,
+Control tokens, or Agent URLs in a QR code. TCP returns its exact `tcp://`
+canonical address and is consumed through Desktop mapping; do not present it as
+a browser link or QR handoff. If the host cannot render QR, tell the user to
+open the Desktop endpoint dialog rather than using an untrusted QR service.
+
+## Desktop detection and update
+
+`GET /v1/daemon/status` reports Agent PID, loopback URL, uptime, and
+connection state; `GET /v1/capabilities` reports the Agent version and
+supported transports. Use those read-only routes plus the host product's
+signed release manifest to detect an outdated Desktop. Ask before installing
+an update. An update must verify the manifest checksum, preserve local SQLite
+and Control configuration, launch the new Desktop, and confirm `/v1/health`
+and `/v1/daemon/status`; roll back if the Agent is unhealthy. This Skill only
+documents the decision flow; the host installer supplies the platform-specific
+signed artifact. It must not download an arbitrary binary or run a package
+installer on the user's behalf.
+
+## Browser and protocol checks
+
+HTTP 200 from a public URL does not prove browser CORS compatibility. For
+browser APIs, check the source's explicit Origin/CSRF policy. WebSocket
+upgrades require a successful 101 and an allowed source Origin; CORS headers
+alone do not authorize an upgrade. TCP has a public `tcp://` canonical address
+and is not a browser URL. The Desktop-to-Desktop WSS bridge is an internal
+transport detail; never make the Agent or Relay reflect arbitrary Origins or
+add wildcard credentialed CORS.
+
+## Failure handling
+
+- If `pubto status` cannot discover the Agent, stop and ask for Desktop
+  installation/startup; do not call Control directly.
+- If pubto networks is stale/unavailable, report the Control connection state and do not fabricate a Network.
+- If publish returns an Agent error, preserve its HTTP status/message and retry only idempotent operations.
+- If a repeated publish returns a different endpoint ID for the same explicit key, treat it as an idempotency failure and stop rather than creating more endpoints.
+- Delete temporary endpoints when the requested handoff is complete.
