@@ -124,7 +124,10 @@ try {
     }
     $releaseVersion = [string]$release.version
     $artifact = @($release.artifacts) | Where-Object {
-        $_.component -eq "desktop" -and $_.os -eq "windows" -and $_.arch -eq "amd64"
+        $_.component -eq "desktop" -and
+        ($_.os -eq "windows" -or $_.os -eq "win32") -and
+        ([string]$_.arch).ToLowerInvariant() -in @("x64", "amd64", "x86_64") -and
+        ([string]$_.packageType).ToLowerInvariant() -in @("nsis", "msi", "exe")
     } | Select-Object -First 1
     if ($null -eq $artifact) {
         throw "No compatible Pubto Desktop artifact is present in the release manifest."
@@ -203,6 +206,28 @@ try {
     $installedInstallRoot = Find-PubtoInstall
     if (-not $installedInstallRoot) { throw "Pubto.exe was not found in a supported installation directory." }
     $desktopApp = Join-Path $installedInstallRoot "Pubto.exe"
+
+    # The Desktop package carries the matching CLI sidecar.  Install it in
+    # the stable per-user bin directory so Skill setup is complete in one
+    # confirmation and does not depend on the installer's versioned folder.
+    $cliDestination = Join-Path $env:LOCALAPPDATA "Pubto\bin\pubto.exe"
+    $cliMarker = Join-Path $env:LOCALAPPDATA "Pubto\bin\.pubto-cli-managed.json"
+    $cliSource = @(
+        (Join-Path $installedInstallRoot "pubto-cli.exe"),
+        (Join-Path $installedInstallRoot "resources\pubto-cli.exe")
+    ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+    if ($cliSource) {
+        if ((Test-Path -LiteralPath $cliDestination -PathType Leaf) -and -not (Test-Path -LiteralPath $cliMarker -PathType Leaf)) {
+            Write-Host "An existing Pubto command is not managed by this installation; it was left unchanged."
+        } else {
+            New-Item -ItemType Directory -Path (Split-Path -Parent $cliDestination) -Force | Out-Null
+            $cliTemp = "$cliDestination.pubto-install.tmp"
+            Copy-Item -LiteralPath $cliSource -Destination $cliTemp -Force
+            Move-Item -LiteralPath $cliTemp -Destination $cliDestination -Force
+            @{ version = $releaseVersion; source = "desktop-bundle"; path = $cliDestination } |
+                ConvertTo-Json -Compress | Set-Content -LiteralPath $cliMarker -Encoding UTF8
+        }
+    }
     Start-Process -FilePath $desktopApp
 
     $installPhase = "agent_health"
