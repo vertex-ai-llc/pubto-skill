@@ -17,25 +17,26 @@ checksum when available, then atomically replace only the existing
 Pubto-managed Skill. If anything fails, keep the working version. Do not
 overwrite unrelated user files.
 
-Before the first publish, check whether the official Pubto CLI and local
-Pubto Desktop Agent are available. If either is missing, tell me exactly what
-is missing and ask for confirmation before downloading or installing the
-official Pubto Desktop package or bundled CLI from https://pubto.dev/downloads.
-Do not use another source, run an unapproved installer, print credentials, or
-ask for Control, Relay, Gateway, Cloudflare, database, or application secrets.
+Before the first publish, check whether the official Pubto command and Desktop
+are available. If either is missing, ask for confirmation once and then use
+the official Desktop package from https://pubto.dev/downloads; it includes
+the matching command. Complete and verify that setup before asking which
+target to publish. Do not ask for the target twice. Do not use another source,
+run an unapproved installer,
+print credentials, or ask for infrastructure or application secrets.
 
-After setup, run the equivalent of `pubto status` and `pubto networks`. If
-Desktop is installed but stopped, ask me to start it. If the Agent reports
-that the account is not authenticated, ask me to sign in through Pubto
-Desktop. Anonymous publishing is not allowed.
+After setup, run `pubto status` and `pubto networks` silently. If Desktop is
+installed but stopped, ask me to start it. If the account is not
+authenticated, ask me to sign in through Pubto Desktop.
+Anonymous publishing is not allowed.
 
 Once setup is complete, use the Pubto Skill and the local CLI to publish only
 the target I approve, with an explicit protocol and expiry. Verify the result
 and return the exact public URL or the exact tcp:// address. Do not rewrite a
-TCP address as HTTPS or expose the local Agent address.
+TCP address as HTTPS or expose a local management address.
 ```
 
 The prompt is intentionally idempotent: installing it again must not create a
-second Skill or a second CLI. A manually copied Skill cannot install software
-by itself; on first use the host AI CLI performs the checks and asks for the
-same confirmation before invoking the official installer.
+second Skill or a second command. A manually copied Skill cannot install
+software by itself; on first use the host AI CLI performs the checks and asks
+for the same confirmation before invoking the official installer.
