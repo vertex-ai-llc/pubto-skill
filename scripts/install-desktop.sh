@@ -48,9 +48,7 @@ fi
 
 case "$(uname -m)" in
   arm64) architecture=arm64 ;;
-  # Release manifests use the portable x64 spelling.  Older manifests used
-  # amd64/x86_64, so the selector below accepts those aliases as well.
-  x86_64) architecture=x64 ;;
+  x86_64) architecture=amd64 ;;
   *)
     printf 'unsupported macOS architecture: %s\n' "$(uname -m)" >&2
     exit 1
@@ -62,40 +60,6 @@ mount_dir="$work_dir/mount"
 mounted=false
 rollback_armed=false
 rollback_done=false
-cli_destination="$HOME/.local/bin/pubto"
-cli_marker="$HOME/.local/bin/.pubto-cli-managed.json"
-cli_backup="$work_dir/pubto-cli.previous"
-cli_marker_backup="$work_dir/pubto-cli-marker.previous"
-had_cli=false
-had_cli_marker=false
-
-# Release Desktop keeps its local runtime records in a profile-specific
-# directory.  Keep the installer on the release profile by default, while
-# accepting the legacy unscoped record for older installations.
-runtime_profile="${PUBTO_DESKTOP_RUNTIME_PROFILE:-release}"
-runtime_profile=$(printf '%s' "$runtime_profile" | tr -cd '[:alnum:]_-')
-[[ -n "$runtime_profile" ]] || runtime_profile=release
-discovery_path() {
-  local base="$HOME/Library/Application Support/pubto"
-  if [[ -f "$base/$runtime_profile/agent-discovery.json" ]]; then
-    printf '%s\n' "$base/$runtime_profile/agent-discovery.json"
-  else
-    printf '%s\n' "$base/agent-discovery.json"
-  fi
-}
-
-add_user_path() {
-  for profile in "$HOME/.zprofile" "$HOME/.zshrc" "$HOME/.profile"; do
-    [[ -e "$profile" ]] || : > "$profile"
-    if ! grep -Fq '# >>> Pubto CLI >>>' "$profile" 2>/dev/null; then
-      cat >> "$profile" <<'PATH_BLOCK'
-# >>> Pubto CLI >>>
-case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac
-# <<< Pubto CLI <<<
-PATH_BLOCK
-    fi
-  done
-}
 cleanup() {
   if [[ "$mounted" == true ]]; then
     /usr/bin/hdiutil detach "$mount_dir" -quiet >/dev/null 2>&1 || true
@@ -118,7 +82,6 @@ restore_previous() {
     sleep 0.25
   done
   rm -rf -- "$target_app" "$config_root" "$tauri_data_root"
-  rm -f -- "$cli_destination" "$cli_marker"
   if [[ "$had_app" == true && -d "$backup_app" ]]; then
     /usr/bin/ditto "$backup_app" "$target_app" || true
   fi
@@ -127,13 +90,6 @@ restore_previous() {
   fi
   if [[ "$had_tauri_data" == true && -d "$backup_tauri_data" ]]; then
     /usr/bin/ditto "$backup_tauri_data" "$tauri_data_root" || true
-  fi
-  if [[ "$had_cli" == true && -f "$cli_backup" ]]; then
-    mkdir -p "$(dirname "$cli_destination")"
-    /usr/bin/ditto "$cli_backup" "$cli_destination" || true
-  fi
-  if [[ "$had_cli_marker" == true && -f "$cli_marker_backup" ]]; then
-    /usr/bin/ditto "$cli_marker_backup" "$cli_marker" || true
   fi
   if [[ -d "$target_app" ]]; then
     /usr/bin/open "$target_app" >/dev/null 2>&1 || true
@@ -172,12 +128,8 @@ function run(argv) {
   if (!data) throw new Error('Unable to read release manifest');
   const object = ObjC.deepUnwrap($.NSJSONSerialization.JSONObjectWithDataOptionsError(data, 0, null));
   const artifacts = Array.isArray(object.artifacts) ? object.artifacts : [];
-  const archAliases = argv[1] === 'x64' ? new Set(['x64', 'amd64', 'x86_64']) : new Set(['arm64', 'aarch64']);
   const item = artifacts.find((candidate) =>
-    candidate.component === 'desktop' &&
-    (candidate.os === 'macos' || candidate.os === 'darwin') &&
-    archAliases.has(String(candidate.arch || '').toLowerCase()) &&
-    (candidate.packageType === 'dmg' || candidate.packageType === 'app' || !candidate.packageType)
+    candidate.component === 'desktop' && candidate.os === 'darwin' && candidate.arch === argv[1]
   );
   if (!item) throw new Error('No compatible Pubto Desktop artifact in the release manifest');
   return [item.url || '', item.sha256 || '', item.packageType || '', object.version || ''].join('\n');
@@ -197,7 +149,7 @@ fi
 printf 'Pubto Desktop: macOS %s\n' "$architecture"
 printf 'Package: %s\n' "$artifact_url"
 if [[ "$check_only" == true ]]; then
-  discovery=$(discovery_path)
+  discovery="$HOME/Library/Application Support/pubto/agent-discovery.json"
   if [[ -f "$discovery" ]]; then
     agent_url=$(/usr/bin/plutil -extract url raw "$discovery" 2>/dev/null || true)
     if [[ "$agent_url" =~ ^http://(127\.0\.0\.1|localhost|\[::1\]):[0-9]+/?$ ]]; then
@@ -270,14 +222,6 @@ if [[ -d "$tauri_data_root" ]]; then
   /usr/bin/ditto "$tauri_data_root" "$backup_tauri_data"
   had_tauri_data=true
 fi
-if [[ -f "$cli_destination" ]]; then
-  cp "$cli_destination" "$cli_backup"
-  had_cli=true
-fi
-if [[ -f "$cli_marker" ]]; then
-  cp "$cli_marker" "$cli_marker_backup"
-  had_cli_marker=true
-fi
 rollback_armed=true
 /usr/bin/ditto "$source_app" "$staged_app"
 if [[ -d "$target_app" ]]; then
@@ -285,33 +229,10 @@ if [[ -d "$target_app" ]]; then
 fi
 mv "$staged_app" "$target_app"
 
-# A Skill install is also a complete local setup.  The signed Desktop bundle
-# carries the matching CLI sidecar; copy it to the same stable user-owned
-# location used by the Desktop onboarding action.  This is idempotent and
-# refuses to replace a binary that was not installed by Pubto.
-cli_source=""
-for candidate in "$target_app/Contents/MacOS/pubto-cli" "$target_app/Contents/MacOS/pubto-cli-x86_64-apple-darwin" "$target_app/Contents/MacOS/pubto"; do
-  if [[ -f "$candidate" && -x "$candidate" ]]; then cli_source="$candidate"; break; fi
-done
-if [[ -n "$cli_source" ]]; then
-  if [[ -e "$cli_destination" && ! -f "$cli_marker" ]]; then
-    printf '%s\n' 'An existing Pubto command is not managed by this installation; it was left unchanged.' >&2
-  else
-    mkdir -p "$HOME/.local/bin"
-    cli_temporary="$cli_destination.pubto-install.tmp"
-    cp "$cli_source" "$cli_temporary"
-    chmod 755 "$cli_temporary"
-    mv "$cli_temporary" "$cli_destination"
-    printf '{"version":"%s","source":"desktop-bundle","path":"%s"}\n' "$release_version" "$cli_destination" > "$cli_marker"
-    add_user_path "$HOME/.local/bin"
-  fi
-fi
-
 /usr/bin/open "$target_app"
-discovery=$(discovery_path)
+discovery="$HOME/Library/Application Support/pubto/agent-discovery.json"
 health_path="$work_dir/health.json"
 for _ in {1..30}; do
-  discovery=$(discovery_path)
   if [[ -f "$discovery" ]]; then
     agent_url=$(/usr/bin/plutil -extract url raw "$discovery" 2>/dev/null || true)
     if [[ "$agent_url" =~ ^http://(127\.0\.0\.1|localhost|\[::1\]):[0-9]+/?$ ]] && /usr/bin/curl --fail --silent "${agent_url%/}/v1/health" --output "$health_path"; then
