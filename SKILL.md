@@ -52,17 +52,19 @@ On first use, perform these checks in order:
    confirmation. Write to a temporary directory, validate the expected Skill
    files/version, and atomically replace only the old Pubto-managed directory;
    on failure keep the old version.
-3. Check `pubto status` silently. If the CLI or Desktop runtime is missing,
-   tell the user what to install and ask for confirmation before using the
-   official Pubto release installer. If Desktop is stopped or signed out,
-   ask the user to open it and finish sign-in. Publishing anonymously is not
-   allowed.
+3. Check `pubto status` silently. If the CLI or Desktop runtime is missing
+   while the user has already requested a publish, ask once for permission to
+   install the official Desktop package (the package includes the matching
+   CLI and local runtime). Complete and verify that setup before asking which
+   target to publish. Do not ask for the target twice. If Desktop is stopped
+   or signed out, ask the user to open it and finish sign-in. Publishing
+   anonymously is not allowed.
 4. After setup, run `pubto networks`, select a healthy option, and use the
    normal publishing rules below. Both supported network options use the same
    publishing workflow.
 
 If the signed-in account has no Project yet, the first `pubto publish` creates
-one named `Default` automatically. This is an explicit CLI/Agent behavior; do
+one named `Default` automatically. This is an explicit CLI behavior; do
 not ask the user to open an extra project-management screen just to publish.
 Use `--project "Name"` or `--project-id ID` when the user has asked for a
 specific existing Project.
@@ -75,16 +77,10 @@ that lacks the Pubto managed marker.
 
 ## Preconditions
 
-1. Check the local Pubto runtime without changing the machine:
-
-   ~~~sh
-   test -f "$HOME/Library/Application Support/pubto/agent-discovery.json" && cat "$HOME/Library/Application Support/pubto/agent-discovery.json"
-   pubto status
-   ~~~
-
-   On Linux use the user's XDG config directory and on Windows use the user's
-   AppData directory. Keep this check internal; do not show the file, URL, or
-   port in the user response.
+1. Check the local Pubto runtime without changing the machine by running
+   `pubto status` silently. The CLI performs local discovery itself. Never
+   read, print, or ask the user to copy a discovery file, loopback URL, local
+   port, or an internal environment override.
 
 2. If the local Pubto runtime is missing, tell the user that publishing
    requires Pubto Desktop and ask for confirmation before installing or
@@ -94,16 +90,15 @@ that lacks the Pubto managed marker.
    launch Desktop, then run `pubto status` and `pubto networks` again. Do not
    bypass Gatekeeper, UAC, or package-signature warnings.
 
-3. Check capabilities before selecting a source:
+3. Check Desktop readiness before selecting a source:
 
    ~~~sh
-   curl --fail --silent http://127.0.0.1:<discovered-port>/v1/capabilities
+   pubto status
    ~~~
 
-   The response is authoritative for the running Desktop build. Never publish
-   the local management interface itself. A listed capability does not make an
-   unavailable destination usable; `pubto networks` must also report a live,
-   healthy option.
+   The response confirms that the installed Desktop is ready. Never publish
+   the local management interface itself. `pubto networks` must also report a
+   live, healthy option for the requested protocol.
 
 ## Choose a Network
 
@@ -116,7 +111,7 @@ network, hostname, or infrastructure address.
 
 ~~~sh
 pubto publish --port 3000 --network-id simple-network-001 --name Frontend --key frontend --duration 30m
-pubto publish --url https://127.0.0.1:8443 --network-id simple-network-001
+pubto publish --url http://127.0.0.1:8443 --network-id simple-network-001
 pubto publish --ws-port 8998 --network-id simple-network-001
 pubto publish --tcp 5432 --network-id simple-network-001
 pubto publish --file ./report.docx --network-id simple-network-001
@@ -125,10 +120,11 @@ pubto publish --website ./dist --network-id simple-network-001
 ~~~
 
 Before publishing, inspect the request and project for candidate services or
-paths. If there are multiple plausible ports, URLs, files, folders, or sites,
-ask which one to publish (or whether all should be published) and show a
-short human-readable label for each candidate. Never silently choose the
-first port when the user has not identified a target.
+paths. If there are multiple plausible targets, ask which human-readable
+service or file the user means (or whether all should be published). Do not
+print a port scan, local address, process list, discovery path, or management
+URL. Never silently choose the first target when the user has not identified
+one.
 
 Also inspect the selected web app's configuration and recent output for
 references to other local services, such as an API, WebSocket endpoint,
