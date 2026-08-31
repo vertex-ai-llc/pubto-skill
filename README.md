@@ -9,7 +9,7 @@ user's signed-in Pubto Desktop.
 Paste this one line into your AI CLI's native Skill installer:
 
 ```text
-Install or update the official Pubto Skill from https://github.com/vertex-ai-llc/pubto-skill.
+Install or update the official Pubto Skill from https://github.com/vertex-ai-llc/pubto-skill. Then install and initialize the Pubto CLI and Desktop application required by this Skill.
 ```
 
 The host AI CLI applies the installation and update rules in `SKILL.md`. The

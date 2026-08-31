@@ -5,7 +5,7 @@ for that AI CLI's native Skill installer, not a command to paste into a system
 terminal.
 
 ```text
-Install or update the official Pubto Skill from https://github.com/vertex-ai-llc/pubto-skill.
+Install or update the official Pubto Skill from https://github.com/vertex-ai-llc/pubto-skill. Then install and initialize the Pubto CLI and Desktop application required by this Skill.
 
 Use your native Skill installer and install only the pubto-publish Skill in
 this tool's standard user Skill directory. If it is already installed, read
