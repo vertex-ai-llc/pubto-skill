@@ -38,5 +38,10 @@ Skill installation never grants anonymous access. The user must sign in with
 Pubto Desktop before publishing. The Skill never receives or prints provider,
 database, or application credentials.
 
+Once `pubto` is installed, Desktop upgrades are performed with
+`pubto update check` followed by `pubto update apply --yes` after confirmation.
+The bundled `install-desktop.sh`/`install-desktop.ps1` scripts are only the
+bootstrap fallback when the command and Desktop are missing.
+
 See [`SKILL.md`](SKILL.md) for the publishing contract and [`VERSION`](VERSION)
 for the bundle version.

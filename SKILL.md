@@ -209,13 +209,15 @@ browser link or QR handoff.
 
 ## Desktop detection and update
 
-Use the signed release manifest and the host product's update check to detect
-an outdated Desktop. Ask before installing an update. The installer must
-verify its checksum, preserve local account and endpoint data, launch the new
-Desktop, and confirm that it is ready; roll back if it is unhealthy. This
-Skill only documents the decision flow; the host installer supplies the
-platform-specific signed artifact. It must not download an arbitrary binary
-or run a package installer on the user's behalf.
+Use `pubto update check` to detect an outdated Desktop when the managed CLI is
+already installed. After the user confirms, run `pubto update apply --yes`;
+the CLI invokes the same official, transactional installer used by the
+bootstrap flow, verifies its checksum, preserves local account and endpoint
+data, restarts Desktop, and confirms that its local runtime is ready. A failed
+upgrade rolls back to the previous app and data. Do not execute
+`install-desktop.sh` or `install-desktop.ps1` for an upgrade when `pubto` is
+available: those scripts are bootstrap fallbacks for a missing CLI/Desktop.
+Never download an arbitrary binary or run an unapproved package installer.
 
 ## Browser and protocol checks
 

@@ -84,6 +84,58 @@ discovery_path() {
   fi
 }
 
+# LaunchServices treats applications with the same bundle identifier as one
+# application, even when copies exist in /Applications and ~/Applications.
+# Stop every existing Pubto process before replacing the bundle; otherwise
+# `open "$target_app"` can merely focus the old copy and its old Agent.  That
+# leaves the installer polling a stale discovery record until it rolls back.
+stop_running_pubto() {
+  /usr/bin/osascript -e 'tell application "Pubto" to quit' >/dev/null 2>&1 || true
+  /usr/bin/pkill -TERM -x Pubto >/dev/null 2>&1 || true
+  /usr/bin/pkill -TERM -x pubto-desktop >/dev/null 2>&1 || true
+  /usr/bin/pkill -TERM -x pubto-agent >/dev/null 2>&1 || true
+  for _ in {1..40}; do
+    if ! /usr/bin/pgrep -x Pubto >/dev/null 2>&1 \
+      && ! /usr/bin/pgrep -x pubto-desktop >/dev/null 2>&1 \
+      && ! /usr/bin/pgrep -x pubto-agent >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.25
+  done
+  /usr/bin/pkill -KILL -x Pubto >/dev/null 2>&1 || true
+  /usr/bin/pkill -KILL -x pubto-desktop >/dev/null 2>&1 || true
+  /usr/bin/pkill -KILL -x pubto-agent >/dev/null 2>&1 || true
+}
+
+clear_stale_discovery() {
+  local base="$HOME/Library/Application Support/pubto"
+  # Discovery records are ephemeral (the Agent recreates them at startup),
+  # so never carry a record from another app copy into the readiness check.
+  rm -f -- "$base/$runtime_profile/agent-discovery.json" \
+    "$base/agent-discovery.json"
+}
+
+select_install_target() {
+  # If either copy is currently running, upgrade that exact path.  This keeps
+  # the profile and local data aligned even when both application locations
+  # exist after an earlier manual DMG install.
+  for candidate in "/Applications/Pubto.app" "$HOME/Applications/Pubto.app"; do
+    if [[ -d "$candidate" ]] && ps -axo args= 2>/dev/null | grep -Fq -- "$candidate/Contents/MacOS/pubto-desktop"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  # Prefer the standard system Applications location when it already
+  # contains Pubto and is writable; this upgrades the app the user normally
+  # launches instead of creating a second copy in ~/Applications.  Fresh or
+  # permission-limited installs remain per-user and never require sudo.
+  if [[ -d "/Applications/Pubto.app" && -w "/Applications" ]]; then
+    printf '%s\n' "/Applications/Pubto.app"
+  else
+    printf '%s\n' "$HOME/Applications/Pubto.app"
+  fi
+}
+
 add_user_path() {
   for profile in "$HOME/.zprofile" "$HOME/.zshrc" "$HOME/.profile"; do
     [[ -e "$profile" ]] || : > "$profile"
@@ -106,17 +158,8 @@ cleanup() {
 restore_previous() {
   [[ "$rollback_armed" == true && "$rollback_done" == false ]] || return 0
   rollback_done=true
-  /usr/bin/osascript -e 'tell application "Pubto" to quit' >/dev/null 2>&1 || true
-  /usr/bin/pkill -x pubto-agent >/dev/null 2>&1 || true
-  /usr/bin/pkill -x Pubto >/dev/null 2>&1 || true
-  for _ in {1..20}; do
-    /usr/bin/pgrep -x Pubto >/dev/null 2>&1 || break
-    sleep 0.25
-  done
-  for _ in {1..40}; do
-    /usr/bin/pgrep -x pubto-agent >/dev/null 2>&1 || break
-    sleep 0.25
-  done
+  stop_running_pubto
+  clear_stale_discovery
   rm -rf -- "$target_app" "$config_root" "$tauri_data_root"
   rm -f -- "$cli_destination" "$cli_marker"
   if [[ "$had_app" == true && -d "$backup_app" ]]; then
@@ -136,7 +179,7 @@ restore_previous() {
     /usr/bin/ditto "$cli_marker_backup" "$cli_marker" || true
   fi
   if [[ -d "$target_app" ]]; then
-    /usr/bin/open "$target_app" >/dev/null 2>&1 || true
+    /usr/bin/open -n "$target_app" >/dev/null 2>&1 || true
   fi
   printf '%s\n' 'Pubto Desktop installation failed; the previous app and local data were restored.' >&2
 }
@@ -249,7 +292,13 @@ if [[ -z "$source_app" ]]; then
   exit 1
 fi
 
-target_app="$HOME/Applications/Pubto.app"
+# Do this only after the package has passed checksum and bundle validation.
+# It also handles a manually-installed /Applications/Pubto.app that would
+# otherwise win LaunchServices resolution over the per-user copy.
+target_app=$(select_install_target)
+stop_running_pubto
+clear_stale_discovery
+
 staged_app="$work_dir/Pubto.app"
 backup_app="$work_dir/Pubto.previous.app"
 config_root="$HOME/Library/Application Support/pubto"
@@ -307,10 +356,10 @@ if [[ -n "$cli_source" ]]; then
   fi
 fi
 
-/usr/bin/open "$target_app"
+/usr/bin/open -n "$target_app"
 discovery=$(discovery_path)
 health_path="$work_dir/health.json"
-for _ in {1..30}; do
+for _ in {1..60}; do
   discovery=$(discovery_path)
   if [[ -f "$discovery" ]]; then
     agent_url=$(/usr/bin/plutil -extract url raw "$discovery" 2>/dev/null || true)
@@ -338,5 +387,5 @@ JXA
   sleep 1
 done
 
-printf '%s\n' 'Pubto Desktop was installed, but the local Agent did not become ready within 30 seconds.' >&2
+printf '%s\n' 'Pubto Desktop was installed, but the local Agent did not become ready within 60 seconds.' >&2
 exit 1
