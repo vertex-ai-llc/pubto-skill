@@ -212,10 +212,21 @@ try {
     # confirmation and does not depend on the installer's versioned folder.
     $cliDestination = Join-Path $env:LOCALAPPDATA "Pubto\bin\pubto.exe"
     $cliMarker = Join-Path $env:LOCALAPPDATA "Pubto\bin\.pubto-cli-managed.json"
+    # Tauri keeps external binaries with their target triple in packaged
+    # installers (for example pubto-cli-x86_64-pc-windows-msvc.exe), while
+    # older packages used the unqualified name. Accept both layouts and look
+    # only for the CLI sidecar, never the Desktop executable itself.
     $cliSource = @(
         (Join-Path $installedInstallRoot "pubto-cli.exe"),
-        (Join-Path $installedInstallRoot "resources\pubto-cli.exe")
+        (Join-Path $installedInstallRoot "pubto-cli-x86_64-pc-windows-msvc.exe"),
+        (Join-Path $installedInstallRoot "resources\pubto-cli.exe"),
+        (Join-Path $installedInstallRoot "resources\pubto-cli-x86_64-pc-windows-msvc.exe")
     ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+    if (-not $cliSource) {
+        $cliSource = Get-ChildItem -LiteralPath $installedInstallRoot -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^pubto-cli(?:[-.]|$).*\.exe$' } |
+            Select-Object -ExpandProperty FullName -First 1
+    }
     if ($cliSource) {
         if ((Test-Path -LiteralPath $cliDestination -PathType Leaf) -and -not (Test-Path -LiteralPath $cliMarker -PathType Leaf)) {
             Write-Host "An existing Pubto command is not managed by this installation; it was left unchanged."
@@ -227,6 +238,8 @@ try {
             @{ version = $releaseVersion; source = "desktop-bundle"; path = $cliDestination } |
                 ConvertTo-Json -Compress | Set-Content -LiteralPath $cliMarker -Encoding UTF8
         }
+    } else {
+        throw "The Desktop package does not contain its matching Pubto CLI. Re-download the official package and try again."
     }
     Start-Process -FilePath $desktopApp
 
@@ -241,7 +254,8 @@ try {
                     $health = Invoke-RestMethod -Method Get -Uri ($agentUri.AbsoluteUri.TrimEnd("/") + "/v1/health")
                     if ($health.status -eq "ok" -and $health.component -eq "pubto-agent" -and $health.version -eq $releaseVersion) {
                         $rollbackArmed = $false
-                        Write-Host "Pubto Desktop is installed and its local Agent is ready."
+                        Write-Host "Pubto Desktop and the Pubto command are installed and ready."
+                        Write-Host "Open a new terminal or restart your AI CLI before running pubto."
                         return
                     }
                 }

@@ -20,10 +20,19 @@ overwrite unrelated user files.
 Before the first publish, check whether the official Pubto command and Desktop
 are available. If either is missing, ask for confirmation once and then use
 the official Desktop package from https://pubto.dev/downloads; it includes
-the matching command. Complete and verify that setup before asking which
-target to publish. Do not ask for the target twice. Do not use another source,
-run an unapproved installer,
+the matching command. On Windows, after confirmation use the bundled
+`scripts/install-desktop.ps1 -Yes` bootstrap flow so the command is copied and
+added to the user's command path; do not open only the raw package when this
+flow is available. Complete and verify that setup before asking which target
+to publish. Do not ask for the target twice. Do not use another source, run an
+unapproved installer,
 print credentials, or ask for infrastructure or application secrets.
+
+On Windows, if the official installer opens a security confirmation, tell the
+user to verify that it identifies Pubto and came from https://pubto.dev/downloads,
+then choose More info, Run anyway, and Yes. Do not show this instruction unless
+the installer actually triggers that confirmation. After installation, ask the
+user to open a new terminal or restart the AI CLI before checking `pubto`.
 
 After setup, run `pubto status` and `pubto networks` silently. If Desktop is
 installed but stopped, ask me to start it. If the account is not

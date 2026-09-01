@@ -55,13 +55,33 @@ On first use, perform these checks in order:
 3. Check `pubto status` silently. If the CLI or Desktop runtime is missing
    while the user has already requested a publish, ask once for permission to
    install the official Desktop package (the package includes the matching
-   CLI and local runtime). Complete and verify that setup before asking which
-   target to publish. Do not ask for the target twice. If Desktop is stopped
-   or signed out, ask the user to open it and finish sign-in. Publishing
-   anonymously is not allowed.
+   CLI and local runtime). On Windows, use the bundled
+   `scripts/install-desktop.ps1 -Yes` bootstrap flow after confirmation; it
+   installs both Desktop and the matching `pubto` command and configures the
+   user's command path. Do not launch only the raw package when the bootstrap
+   flow is available. Complete and verify that setup before asking which target
+   to publish. Do not ask for the target twice. If Desktop is stopped or signed
+   out, ask the user to open it and finish sign-in. Publishing anonymously is
+   not allowed.
 4. After setup, run `pubto networks`, select a healthy option, and use the
    normal publishing rules below. Both supported network options use the same
    publishing workflow.
+
+### Windows installation confirmation
+
+When the official Windows installer is opened from the Skill, Windows may
+show a security confirmation before it starts. Confirm that the download came
+from `https://pubto.dev/downloads` and that the window identifies **Pubto**.
+Then choose **More info** and **Run anyway**, followed by **Yes** on the normal
+Windows permission prompt. If the window names a different application or the
+download did not come from the official Pubto downloads page, stop and report
+it instead of continuing. After installation, start a new terminal (or
+restart the AI CLI) so it can see the newly installed `pubto` command.
+
+Do not show this instruction unless the installer actually triggers that
+confirmation.
+It is only a fallback for the platform confirmation that can appear while the
+official package is being opened.
 
 If the signed-in account has no Project yet, the first `pubto publish` creates
 one named `Default` automatically. This is an explicit CLI behavior; do
@@ -85,10 +105,11 @@ that lacks the Pubto managed marker.
 2. If the local Pubto runtime is missing, tell the user that publishing
    requires Pubto Desktop and ask for confirmation before installing or
    updating it. This Skill does not silently download an installer. After
-   explicit confirmation, use the signed Desktop release flow configured by
+   explicit confirmation, use the official Desktop release flow configured by
    the host product; verify its checksum, preserve account and endpoint data,
    launch Desktop, then run `pubto status` and `pubto networks` again. Do not
-   bypass Gatekeeper, UAC, or package-signature warnings.
+   bypass platform protections blindly; use the Windows installation guidance
+   above only for the official package.
 
 3. Check Desktop readiness before selecting a source:
 
@@ -234,6 +255,14 @@ Origins or add wildcard credentialed CORS.
   Desktop installation/startup; do not call infrastructure services directly.
 - If `pubto networks` is stale/unavailable, report that publishing options
   are temporarily unavailable and do not fabricate one.
+- If `pubto status` confirms that Desktop is ready but a local command still
+  cannot reach it, or Desktop functions repeatedly fail, check for a VPN,
+  proxy, firewall, or security filter intercepting local application traffic.
+  Ask the user to allow Pubto Desktop and `pubto` local communication or to
+  temporarily pause that software and retry. Never change system proxy/VPN
+  settings automatically, and do not print a local address or port. Show this
+  hint only after the healthy status check and a real local operation failure;
+  do not suggest it for an ordinary sign-in, quota, or public-network error.
 - If publish returns a local runtime error, preserve its HTTP status/message and retry only idempotent operations.
 - If a repeated publish returns a different endpoint ID for the same explicit key, treat it as an idempotency failure and stop rather than creating more endpoints.
 - Delete temporary endpoints when the requested handoff is complete.

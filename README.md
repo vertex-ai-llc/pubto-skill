@@ -17,6 +17,13 @@ Skill checks the local command, Desktop, login state, and managed version
 before publishing; it never grants anonymous access or handles provider or
 application credentials.
 
+On Windows, the official installer can show a security confirmation before it
+opens. Verify that it identifies Pubto and that the package came from
+`https://pubto.dev/downloads`, then choose **More info**, **Run anyway**, and
+**Yes** if Windows asks for permission. This guidance applies only when that
+confirmation appears. Start a new terminal or restart the AI CLI after setup
+so the newly installed `pubto` command is available.
+
 ## Install paths
 
 All paths install the same versioned Skill and use the same Pubto command and
@@ -29,6 +36,9 @@ Desktop:
 3. **Copy from GitHub:** copy this repository's `pubto-publish` directory into the AI CLI's standard
    user Skill directory. On first use the Skill checks the command, Desktop and
    login state, and asks before completing the official installation flow.
+
+On Windows, the native setup flow uses the bundled `install-desktop.ps1`
+bootstrap so Desktop and the matching `pubto` command are installed together.
 
 The AI CLI may check for a newer Skill once per 24 hours. Updates are staged,
 verified, and atomic; a failed update keeps the previous version. Do not copy
