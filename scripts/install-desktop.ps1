@@ -37,6 +37,7 @@ function Write-InstallerDiagnostic {
         download = @("windows_download_failed", "Windows installation could not download the selected package")
         checksum = @("windows_checksum_failed", "Windows installation rejected the package checksum")
         backup = @("windows_backup_failed", "Windows installation could not back up the previous installation")
+        process_stop = @("windows_process_stop_failed", "Windows installation could not close the previous Pubto processes")
         package = @("windows_package_failed", "The Windows installer package returned an error")
         launch = @("windows_app_launch_failed", "Windows installation completed but Desktop could not be started")
         agent_health = @("windows_agent_health_failed", "Windows installation completed but the local Agent did not become ready")
@@ -70,13 +71,40 @@ function Find-PubtoInstall {
 }
 
 function Stop-PubtoProcesses {
-    Get-Process -Name "Pubto", "pubto-agent" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-    foreach ($attempt in 1..20) {
-        $running = Get-Process -Name "Pubto", "pubto-agent" -ErrorAction SilentlyContinue
+    $names = @("Pubto.exe", "pubto-desktop.exe", "pubto-agent.exe")
+    $script:installPhase = "process_stop"
+    foreach ($attempt in 1..12) {
+        $running = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+            $names -contains ([string]$_.Name).ToLowerInvariant()
+        })
+        if (-not $running) {
+            # Get-CimInstance can be unavailable on constrained Windows
+            # installations; use the normal process list as a final check.
+            $running = @(Get-Process -Name "Pubto", "pubto-desktop", "pubto-agent" -ErrorAction SilentlyContinue)
+        }
         if (-not $running) { return }
-        Start-Sleep -Milliseconds 250
+        foreach ($process in $running) {
+            $processId = $process.ProcessId
+            if (-not $processId) { $processId = $process.Id }
+            $pid = [int]$processId
+            if ($pid -gt 0) {
+                # taskkill terminates the complete Agent/Desktop process tree;
+                # Stop-Process alone can leave a child Agent holding the binary.
+                & taskkill.exe /PID $pid /T /F *> $null
+            }
+        }
+        Start-Sleep -Milliseconds 500
     }
-    Get-Process -Name "Pubto", "pubto-agent" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    $remaining = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+        $names -contains ([string]$_.Name).ToLowerInvariant()
+    })
+    if (-not $remaining) {
+        $remaining = @(Get-Process -Name "Pubto", "pubto-desktop", "pubto-agent" -ErrorAction SilentlyContinue)
+    }
+    if ($remaining) {
+        $details = ($remaining | ForEach-Object { "$($_.Name) (PID $($_.ProcessId))" }) -join ", "
+        throw "Pubto Desktop is still running: $details. Close it and run the installer again."
+    }
 }
 
 function Copy-Directory {
