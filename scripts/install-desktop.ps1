@@ -191,10 +191,10 @@ function Stop-PubtoProcesses {
         foreach ($process in $running) {
             $processId = $process.ProcessId
             if (-not $processId) { $processId = $process.Id }
-            $pid = [int]$processId
-            if ($pid -gt 0) {
-                Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
-                & taskkill.exe /PID $pid /T /F *> $null
+            $targetPid = [int]$processId
+            if ($targetPid -gt 0) {
+                Stop-Process -Id $targetPid -Force -ErrorAction SilentlyContinue
+                & taskkill.exe /PID $targetPid /T /F *> $null
             }
         }
         Invoke-PubtoImageKill
