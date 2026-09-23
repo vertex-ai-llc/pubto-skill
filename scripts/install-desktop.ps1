@@ -73,10 +73,16 @@ function Find-PubtoInstall {
 function Get-PubtoProcesses {
     $running = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
         $name = [string]$_.Name
+        $caption = [string]$_.Caption
+        $description = [string]$_.Description
+        $executablePath = [string]$_.ExecutablePath
         $commandLine = [string]$_.CommandLine
         $name -match '(?i)^pubto\.exe$' -or
             $name -match '(?i)^pubto-desktop(?:-[^.]+)?\.exe$' -or
             $name -match '(?i)^pubto-agent(?:-[^.]+)?\.exe$' -or
+            $caption -eq 'Pubto Agent' -or
+            $description -eq 'Pubto Agent' -or
+            $executablePath -match '(?i)(?:\\|/)pubto-agent(?:-[^\\/\s"]+)?\.exe' -or
             $commandLine -match '(?i)(?:\\|/)pubto-agent(?:-[^\\/\s"]+)?\.exe'
     })
     $running += @(Get-Process -Name "Pubto", "pubto-desktop", "pubto-agent" -ErrorAction SilentlyContinue)
@@ -84,10 +90,10 @@ function Get-PubtoProcesses {
     # installer. tasklist is a system utility and still reports its image/PID.
     $tasklist = Join-Path $env:SystemRoot "System32\tasklist.exe"
     if (Test-Path -LiteralPath $tasklist -PathType Leaf) {
-        $rows = @(& $tasklist /FO CSV /NH /FI "IMAGENAME eq pubto-agent.exe" 2>$null)
+        $rows = @(& $tasklist /FO CSV /NH 2>$null)
         foreach ($row in $rows) {
-            if ($row -match '"pubto-agent\.exe"\s*,\s*"(\d+)"') {
-                $running += [pscustomobject]@{ Name = "pubto-agent.exe"; ProcessId = [int]$Matches[1] }
+            if ($row -match '"([^"\r\n]*pubto-agent[^"\r\n]*)"\s*,\s*"(\d+)"') {
+                $running += [pscustomobject]@{ Name = $Matches[1]; ProcessId = [int]$Matches[2] }
             }
         }
     }
@@ -100,9 +106,18 @@ function Invoke-PubtoImageKill {
     foreach ($name in @(
         "pubto.exe",
         "pubto-desktop.exe",
+        "pubto-desktop*.exe",
         "pubto-desktop-x86_64-pc-windows-msvc.exe",
+        "pubto-desktop-aarch64-pc-windows-msvc.exe"
+    )) {
+        & $taskkill /IM $name /T /F *> $null
+    }
+    Start-Sleep -Milliseconds 150
+    foreach ($name in @(
         "pubto-agent.exe",
-        "pubto-agent-x86_64-pc-windows-msvc.exe"
+        "pubto-agent*.exe",
+        "pubto-agent-x86_64-pc-windows-msvc.exe",
+        "pubto-agent-aarch64-pc-windows-msvc.exe"
     )) {
         & $taskkill /IM $name /T /F *> $null
     }
@@ -117,16 +132,45 @@ function Invoke-PubtoImageKill {
 }
 
 function Invoke-PubtoElevatedKill {
-    # An old Agent can have been started elevated. Elevate the native system
-    # utility itself so one UAC approval is enough to release pubto-agent.exe.
-    $taskkill = Join-Path $env:SystemRoot "System32\taskkill.exe"
-    if (-not (Test-Path -LiteralPath $taskkill -PathType Leaf)) { $taskkill = "taskkill.exe" }
+    # An old Agent can have been started elevated. Run one complete cleanup
+    # pass elevated so a normal-user installer can release the locked image.
+    $powershell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+    $command = @'
+$ErrorActionPreference = 'SilentlyContinue'
+$taskkill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
+if (-not (Test-Path -LiteralPath $taskkill -PathType Leaf)) { $taskkill = 'taskkill.exe' }
+foreach ($name in @('pubto.exe', 'pubto-desktop.exe', 'pubto-desktop*.exe')) {
+  & $taskkill /IM $name /T /F *> $null
+}
+Start-Sleep -Milliseconds 150
+$targets = @(Get-CimInstance Win32_Process | Where-Object {
+  $name = [string]$_.Name
+  $caption = [string]$_.Caption
+  $description = [string]$_.Description
+  $path = [string]$_.ExecutablePath
+  $commandLine = [string]$_.CommandLine
+  $name -match '(?i)^pubto-agent(?:-[^.]+)?\.exe$' -or
+    $caption -eq 'Pubto Agent' -or
+    $description -eq 'Pubto Agent' -or
+    $path -match '(?i)(?:\\|/)pubto-agent(?:-[^\\/\s"]+)?\.exe' -or
+    $commandLine -match '(?i)(?:\\|/)pubto-agent(?:-[^\\/\s"]+)?\.exe'
+})
+foreach ($target in $targets) {
+  Stop-Process -Id ([int]$target.ProcessId) -Force -ErrorAction SilentlyContinue
+  & $taskkill /PID ([int]$target.ProcessId) /T /F *> $null
+}
+foreach ($name in @('pubto-agent.exe', 'pubto-agent*.exe')) {
+  & $taskkill /IM $name /T /F *> $null
+}
+'@
     try {
-        Start-Process -FilePath $taskkill -Verb RunAs -WindowStyle Hidden -Wait -PassThru -ArgumentList @(
-            '/IM', 'pubto-agent.exe', '/T', '/F'
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+        Start-Process -FilePath $powershell -Verb RunAs -WindowStyle Hidden -Wait -PassThru -ArgumentList @(
+            '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', $encoded
         ) | Out-Null
     } catch {
-        # Final verification below reports a clear retry message.
+    # The normal cleanup pass still runs; this is best-effort for non-elevated
+    # processes and must not show a second interactive error dialog.
     }
 }
 
@@ -160,8 +204,12 @@ function Stop-PubtoProcesses {
     Start-Sleep -Milliseconds 500
     $remaining = @(Get-PubtoProcesses)
     if ($remaining) {
-        $details = ($remaining | ForEach-Object { "$($_.Name) (PID $($_.ProcessId))" }) -join ", "
-        throw "Pubto Desktop is still running: $details. Close it and run the installer again."
+        foreach ($process in $remaining) {
+            $processId = if ($process.ProcessId) { $process.ProcessId } else { $process.Id }
+            if ([int]$processId -gt 0) {
+                & "$env:SystemRoot\System32\taskkill.exe" /PID ([int]$processId) /T /F *> $null
+            }
+        }
     }
 }
 
