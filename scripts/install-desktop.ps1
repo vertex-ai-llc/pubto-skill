@@ -70,18 +70,32 @@ function Find-PubtoInstall {
     } | Select-Object -First 1
 }
 
+function Invoke-PubtoImageKill {
+    $taskkill = Join-Path $env:SystemRoot "System32\taskkill.exe"
+    if (-not (Test-Path -LiteralPath $taskkill -PathType Leaf)) { $taskkill = "taskkill.exe" }
+    foreach ($name in @("pubto.exe", "pubto-desktop.exe", "pubto-agent.exe")) {
+        & $taskkill /IM $name /T /F *> $null
+    }
+}
+
+function Get-PubtoProcesses {
+    $names = @("pubto.exe", "pubto-desktop.exe", "pubto-agent.exe")
+    $running = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+        $names -contains ([string]$_.Name).ToLowerInvariant()
+    })
+    if (-not $running) {
+        $running = @(Get-Process -Name "Pubto", "pubto-desktop" -ErrorAction SilentlyContinue)
+        $running += @(Get-Process -Name "pubto-agent" -ErrorAction SilentlyContinue)
+    }
+    return $running
+}
+
 function Stop-PubtoProcesses {
-    $names = @("Pubto.exe", "pubto-desktop.exe", "pubto-agent.exe")
+    $names = @("pubto.exe", "pubto-desktop.exe", "pubto-agent.exe")
+    Invoke-PubtoImageKill
     $script:installPhase = "process_stop"
     foreach ($attempt in 1..12) {
-        $running = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-            $names -contains ([string]$_.Name).ToLowerInvariant()
-        })
-        if (-not $running) {
-            # Get-CimInstance can be unavailable on constrained Windows
-            # installations; use the normal process list as a final check.
-            $running = @(Get-Process -Name "Pubto", "pubto-desktop", "pubto-agent" -ErrorAction SilentlyContinue)
-        }
+        $running = @(Get-PubtoProcesses)
         if (-not $running) { return }
         foreach ($process in $running) {
             $processId = $process.ProcessId
@@ -93,14 +107,12 @@ function Stop-PubtoProcesses {
                 & taskkill.exe /PID $pid /T /F *> $null
             }
         }
+        Invoke-PubtoImageKill
         Start-Sleep -Milliseconds 500
     }
-    $remaining = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-        $names -contains ([string]$_.Name).ToLowerInvariant()
-    })
-    if (-not $remaining) {
-        $remaining = @(Get-Process -Name "Pubto", "pubto-desktop", "pubto-agent" -ErrorAction SilentlyContinue)
-    }
+    Invoke-PubtoImageKill
+    Start-Sleep -Milliseconds 500
+    $remaining = @(Get-PubtoProcesses)
     if ($remaining) {
         $details = ($remaining | ForEach-Object { "$($_.Name) (PID $($_.ProcessId))" }) -join ", "
         throw "Pubto Desktop is still running: $details. Close it and run the installer again."
