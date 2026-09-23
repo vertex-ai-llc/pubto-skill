@@ -70,40 +70,86 @@ function Find-PubtoInstall {
     } | Select-Object -First 1
 }
 
+function Get-PubtoProcesses {
+    $running = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+        $name = [string]$_.Name
+        $commandLine = [string]$_.CommandLine
+        $name -match '(?i)^pubto\.exe$' -or
+            $name -match '(?i)^pubto-desktop(?:-[^.]+)?\.exe$' -or
+            $name -match '(?i)^pubto-agent(?:-[^.]+)?\.exe$' -or
+            $commandLine -match '(?i)(?:\\|/)pubto-agent(?:-[^\\/\s"]+)?\.exe'
+    })
+    $running += @(Get-Process -Name "Pubto", "pubto-desktop", "pubto-agent" -ErrorAction SilentlyContinue)
+    # Get-Process/CIM can hide an elevated process from a current-user
+    # installer. tasklist is a system utility and still reports its image/PID.
+    $tasklist = Join-Path $env:SystemRoot "System32\tasklist.exe"
+    if (Test-Path -LiteralPath $tasklist -PathType Leaf) {
+        $rows = @(& $tasklist /FO CSV /NH /FI "IMAGENAME eq pubto-agent.exe" 2>$null)
+        foreach ($row in $rows) {
+            if ($row -match '"pubto-agent\.exe"\s*,\s*"(\d+)"') {
+                $running += [pscustomobject]@{ Name = "pubto-agent.exe"; ProcessId = [int]$Matches[1] }
+            }
+        }
+    }
+    return @($running | Sort-Object -Property Id, ProcessId -Unique)
+}
+
 function Invoke-PubtoImageKill {
     $taskkill = Join-Path $env:SystemRoot "System32\taskkill.exe"
     if (-not (Test-Path -LiteralPath $taskkill -PathType Leaf)) { $taskkill = "taskkill.exe" }
-    foreach ($name in @("pubto.exe", "pubto-desktop.exe", "pubto-agent.exe")) {
+    foreach ($name in @(
+        "pubto.exe",
+        "pubto-desktop.exe",
+        "pubto-desktop-x86_64-pc-windows-msvc.exe",
+        "pubto-agent.exe",
+        "pubto-agent-x86_64-pc-windows-msvc.exe"
+    )) {
         & $taskkill /IM $name /T /F *> $null
+    }
+    Get-Process -Name "pubto-agent" -ErrorAction SilentlyContinue |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+    foreach ($process in @(Get-PubtoProcesses)) {
+        $processId = if ($process.ProcessId) { $process.ProcessId } else { $process.Id }
+        if ([int]$processId -gt 0) {
+            & $taskkill /PID ([int]$processId) /T /F *> $null
+        }
     }
 }
 
-function Get-PubtoProcesses {
-    $names = @("pubto.exe", "pubto-desktop.exe", "pubto-agent.exe")
-    $running = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-        $names -contains ([string]$_.Name).ToLowerInvariant()
-    })
-    if (-not $running) {
-        $running = @(Get-Process -Name "Pubto", "pubto-desktop" -ErrorAction SilentlyContinue)
-        $running += @(Get-Process -Name "pubto-agent" -ErrorAction SilentlyContinue)
+function Invoke-PubtoElevatedKill {
+    # An old Agent can have been started elevated. Elevate the native system
+    # utility itself so one UAC approval is enough to release pubto-agent.exe.
+    $taskkill = Join-Path $env:SystemRoot "System32\taskkill.exe"
+    if (-not (Test-Path -LiteralPath $taskkill -PathType Leaf)) { $taskkill = "taskkill.exe" }
+    try {
+        Start-Process -FilePath $taskkill -Verb RunAs -WindowStyle Hidden -Wait -PassThru -ArgumentList @(
+            '/IM', 'pubto-agent.exe', '/T', '/F'
+        ) | Out-Null
+    } catch {
+        # Final verification below reports a clear retry message.
     }
-    return $running
 }
 
 function Stop-PubtoProcesses {
-    $names = @("pubto.exe", "pubto-desktop.exe", "pubto-agent.exe")
     Invoke-PubtoImageKill
+    $elevationAttempted = $false
     $script:installPhase = "process_stop"
     foreach ($attempt in 1..12) {
         $running = @(Get-PubtoProcesses)
         if (-not $running) { return }
+        if (-not $elevationAttempted) {
+            Invoke-PubtoElevatedKill
+            $elevationAttempted = $true
+            Start-Sleep -Milliseconds 500
+            $running = @(Get-PubtoProcesses)
+            if (-not $running) { return }
+        }
         foreach ($process in $running) {
             $processId = $process.ProcessId
             if (-not $processId) { $processId = $process.Id }
             $pid = [int]$processId
             if ($pid -gt 0) {
-                # taskkill terminates the complete Agent/Desktop process tree;
-                # Stop-Process alone can leave a child Agent holding the binary.
+                Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
                 & taskkill.exe /PID $pid /T /F *> $null
             }
         }
