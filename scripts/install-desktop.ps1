@@ -100,7 +100,65 @@ function Get-PubtoProcesses {
     return @($running | Sort-Object -Property Id, ProcessId -Unique)
 }
 
+# Image-name termination is not sufficient when Windows has a renamed sidecar
+# or another process holds the executable open. Restart Manager is the Windows
+# API used by installers to close the owners of a specific executable image.
+function Invoke-PubtoRestartManager {
+    if (-not $IsWindows -and $env:OS -ne 'Windows_NT') { return }
+    try {
+        if (-not ('PubtoRestartManager' -as [type])) {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class PubtoRestartManager {
+  [DllImport("rstrtmgr.dll", CharSet = CharSet.Unicode)]
+  public static extern int RmStartSession(out uint handle, int flags, string key);
+
+  [DllImport("rstrtmgr.dll", CharSet = CharSet.Unicode)]
+  public static extern int RmRegisterResources(
+    uint handle, uint fileCount, string[] files, uint appCount, IntPtr apps,
+    uint serviceCount, string[] services);
+
+  [DllImport("rstrtmgr.dll")]
+  public static extern int RmShutdown(uint handle, int flags, IntPtr status);
+
+  [DllImport("rstrtmgr.dll")]
+  public static extern int RmEndSession(uint handle);
+}
+'@
+        }
+        $files = @(
+            Get-PubtoProcesses | ForEach-Object {
+                if ($_.ExecutablePath) { [string]$_.ExecutablePath }
+            } | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) }
+        ) | Sort-Object -Unique
+        if ($files.Count -eq 0) { return }
+        $session = [uint32]0
+        $started = [PubtoRestartManager]::RmStartSession(
+            [ref]$session, 0, [guid]::NewGuid().ToString()
+        )
+        if ($started -ne 0) { return }
+        try {
+            $registered = [PubtoRestartManager]::RmRegisterResources(
+                $session, [uint32]$files.Count, [string[]]$files, 0,
+                [IntPtr]::Zero, 0, [string[]]@()
+            )
+            if ($registered -eq 0) {
+                # RmForceShutdown = 1. Only registered Pubto images are
+                # eligible for termination.
+                [void][PubtoRestartManager]::RmShutdown($session, 1, [IntPtr]::Zero)
+            }
+        } finally {
+            [void][PubtoRestartManager]::RmEndSession($session)
+        }
+    } catch {
+        # Best effort; the bounded taskkill loop remains the final fallback.
+    }
+}
+
 function Invoke-PubtoImageKill {
+    Invoke-PubtoRestartManager
     $taskkill = Join-Path $env:SystemRoot "System32\taskkill.exe"
     if (-not (Test-Path -LiteralPath $taskkill -PathType Leaf)) { $taskkill = "taskkill.exe" }
     foreach ($name in @(
@@ -175,6 +233,7 @@ foreach ($name in @('pubto-agent.exe', 'pubto-agent*.exe')) {
 }
 
 function Stop-PubtoProcesses {
+    Invoke-PubtoRestartManager
     Invoke-PubtoImageKill
     $elevationAttempted = $false
     $script:installPhase = "process_stop"
@@ -198,6 +257,7 @@ function Stop-PubtoProcesses {
             }
         }
         Invoke-PubtoImageKill
+        Invoke-PubtoRestartManager
         Start-Sleep -Milliseconds 500
     }
     Invoke-PubtoImageKill
