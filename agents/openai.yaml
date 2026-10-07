@@ -1,4 +1,4 @@
 interface:
-  display_name: "Pubto Publish"
+  display_name: "Pubto Skill"
   short_description: "Publish and manage local endpoints"
-  default_prompt: "Use $pubto-publish to publish this local endpoint and report its public URL."
+  default_prompt: "Use $pubto-skill to publish this local endpoint and report its public URL."

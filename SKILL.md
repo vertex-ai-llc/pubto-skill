@@ -1,9 +1,9 @@
 ---
-name: pubto-publish
+name: pubto-skill
 description: Publish, share, expose, preview, forward, or map local HTTP/HTTPS, WebSocket, TCP, file, folder, and website targets. Use for requests such as 发布、共享、公开本地服务、内网穿透、端口映射、预览文件/网站、查看公开地址、停止/删除/更换地址, or equivalent English requests involving localhost, ports, URLs, files, directories, APIs, databases, or AI Skill setup.
 ---
 
-# Pubto Publish
+# Pubto Skill
 
 ## User-facing response rules
 

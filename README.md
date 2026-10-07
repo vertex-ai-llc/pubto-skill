@@ -1,6 +1,6 @@
 # Pubto Skill
 
-`pubto-publish` lets a supported AI CLI publish an explicitly approved local
+`pubto-skill` lets a supported AI CLI publish an explicitly approved local
 HTTP, HTTPS, WebSocket, TCP, file, directory, or website target through the
 user's signed-in Pubto Desktop.
 
@@ -33,7 +33,7 @@ Desktop:
 2. **Ask your AI CLI:** paste the one-line prompt above. The host's native Skill
    installer downloads this repository and asks before installing a missing
    Desktop or command.
-3. **Copy from GitHub:** copy this repository's `pubto-publish` directory into the AI CLI's standard
+3. **Copy from GitHub:** copy this repository's `pubto-skill` directory into the AI CLI's standard
    user Skill directory. On first use the Skill checks the command, Desktop and
    login state, and asks before completing the official installation flow.
 

@@ -7,7 +7,7 @@ terminal.
 ```text
 Install or update the official Pubto Skill from https://github.com/vertex-ai-llc/pubto-skill. Then install and initialize the Pubto CLI and Desktop application required by this Skill.
 
-Use your native Skill installer and install only the pubto-publish Skill in
+Use your native Skill installer and install only the pubto-skill Skill in
 this tool's standard user Skill directory. If it is already installed, read
 the Pubto managed marker or VERSION metadata. Check the remote version at most
 once every 24 hours unless I explicitly ask for an update. Update only when a
