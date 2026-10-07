@@ -65,6 +65,9 @@ function Find-PubtoInstall {
         (Join-Path $env:ProgramFiles "Pubto"),
         (Join-Path $env:LOCALAPPDATA "Pubto")
     )
+    $programFilesX86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+    if ($programFilesX86) { $candidates += Join-Path $programFilesX86 "Pubto" }
+    if ($env:USERPROFILE) { $candidates += Join-Path $env:USERPROFILE "bin" }
     return $candidates | Select-Object -Unique | Where-Object {
         Test-Path -LiteralPath (Join-Path $_ "Pubto.exe") -PathType Leaf
     } | Select-Object -First 1
@@ -133,6 +136,20 @@ public static class PubtoRestartManager {
                 if ($_.ExecutablePath) { [string]$_.ExecutablePath }
             } | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) }
         ) | Sort-Object -Unique
+        $roots = @(
+            (Join-Path $env:LOCALAPPDATA "Programs\Pubto"),
+            (Join-Path $env:LOCALAPPDATA "Pubto\bin"),
+            (Join-Path $env:ProgramFiles "Pubto"),
+            (Join-Path $env:USERPROFILE "bin")
+        )
+        $programFilesX86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+        if ($programFilesX86) { $roots += Join-Path $programFilesX86 "Pubto" }
+        foreach ($root in @($roots | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container) })) {
+            $files += @(Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match '(?i)^pubto(?:-desktop|-agent)?(?:-[^.]+)?\.exe$' } |
+                ForEach-Object { $_.FullName })
+        }
+        $files = @($files | Sort-Object -Unique)
         if ($files.Count -eq 0) { return }
         $session = [uint32]0
         $started = [PubtoRestartManager]::RmStartSession(
