@@ -147,6 +147,48 @@ function Get-PubtoProcesses {
     return @($running | Sort-Object -Property Id, ProcessId -Unique)
 }
 
+# taskkill returns a non-zero status when a process is already gone. That is a
+# normal upgrade state, not an installer failure. Keep native command output
+# and exit status out of PowerShell's terminating error pipeline.
+function Invoke-PubtoTaskKill {
+    param(
+        [string[]]$TaskkillArguments
+    )
+    $previousErrorPreference = $ErrorActionPreference
+    $previousNativePreference = $null
+    $hasNativePreference = $false
+    $previousLastExitCode = Get-Variable -Name LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue
+    $hadLastExitCode = $null -ne $previousLastExitCode
+    $savedLastExitCode = if ($hadLastExitCode) { $previousLastExitCode.Value } else { $null }
+    $taskkillExitCode = -1
+    try {
+        $ErrorActionPreference = 'SilentlyContinue'
+        $preference = Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue
+        if ($preference) {
+            $hasNativePreference = $true
+            $previousNativePreference = $preference.Value
+            Set-Variable -Name PSNativeCommandUseErrorActionPreference -Value $false -Scope Local
+        }
+        $taskkill = Join-Path $env:SystemRoot "System32\taskkill.exe"
+        if (-not (Test-Path -LiteralPath $taskkill -PathType Leaf)) { $taskkill = "taskkill.exe" }
+        & $taskkill @TaskkillArguments *> $null
+        $taskkillExitCode = $LASTEXITCODE
+    } catch {
+        # A missing/already-exited process is expected during cleanup.
+    } finally {
+        if ($hasNativePreference) {
+            Set-Variable -Name PSNativeCommandUseErrorActionPreference -Value $previousNativePreference -Scope Local
+        }
+        if ($hadLastExitCode) {
+            Set-Variable -Name LASTEXITCODE -Value $savedLastExitCode -Scope Global
+        } else {
+            Remove-Variable -Name LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue
+        }
+        $ErrorActionPreference = $previousErrorPreference
+    }
+    return $taskkillExitCode
+}
+
 # Image-name termination is not sufficient when Windows has a renamed sidecar
 # or another process holds the executable open. Restart Manager is the Windows
 # API used by installers to close the owners of a specific executable image.
@@ -220,8 +262,6 @@ public static class PubtoRestartManager {
 
 function Invoke-PubtoImageKill {
     Invoke-PubtoRestartManager
-    $taskkill = Join-Path $env:SystemRoot "System32\taskkill.exe"
-    if (-not (Test-Path -LiteralPath $taskkill -PathType Leaf)) { $taskkill = "taskkill.exe" }
     foreach ($name in @(
         "pubto.exe",
         "pubto-desktop.exe",
@@ -229,7 +269,7 @@ function Invoke-PubtoImageKill {
         "pubto-desktop-x86_64-pc-windows-msvc.exe",
         "pubto-desktop-aarch64-pc-windows-msvc.exe"
     )) {
-        & $taskkill /IM $name /T /F *> $null
+        Invoke-PubtoTaskKill -TaskkillArguments @('/IM', $name, '/T', '/F') | Out-Null
     }
     Start-Sleep -Milliseconds 150
     foreach ($name in @(
@@ -238,14 +278,14 @@ function Invoke-PubtoImageKill {
         "pubto-agent-x86_64-pc-windows-msvc.exe",
         "pubto-agent-aarch64-pc-windows-msvc.exe"
     )) {
-        & $taskkill /IM $name /T /F *> $null
+        Invoke-PubtoTaskKill -TaskkillArguments @('/IM', $name, '/T', '/F') | Out-Null
     }
     Get-Process -Name "pubto-agent" -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
     foreach ($process in @(Get-PubtoProcesses)) {
         $processId = if ($process.ProcessId) { $process.ProcessId } else { $process.Id }
         if ([int]$processId -gt 0) {
-            & $taskkill /PID ([int]$processId) /T /F *> $null
+            Invoke-PubtoTaskKill -TaskkillArguments @('/PID', ([string][int]$processId), '/T', '/F') | Out-Null
         }
     }
 }
@@ -314,7 +354,7 @@ function Stop-PubtoProcesses {
             $targetPid = [int]$processId
             if ($targetPid -gt 0) {
                 Stop-Process -Id $targetPid -Force -ErrorAction SilentlyContinue
-                & taskkill.exe /PID $targetPid /T /F *> $null
+                Invoke-PubtoTaskKill -TaskkillArguments @('/PID', ([string]$targetPid), '/T', '/F') | Out-Null
             }
         }
         Invoke-PubtoImageKill
@@ -328,7 +368,7 @@ function Stop-PubtoProcesses {
         foreach ($process in $remaining) {
             $processId = if ($process.ProcessId) { $process.ProcessId } else { $process.Id }
             if ([int]$processId -gt 0) {
-                & "$env:SystemRoot\System32\taskkill.exe" /PID ([int]$processId) /T /F *> $null
+                Invoke-PubtoTaskKill -TaskkillArguments @('/PID', ([string][int]$processId), '/T', '/F') | Out-Null
             }
         }
     }
