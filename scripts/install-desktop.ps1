@@ -69,8 +69,52 @@ function Find-PubtoInstall {
     if ($programFilesX86) { $candidates += Join-Path $programFilesX86 "Pubto" }
     if ($env:USERPROFILE) { $candidates += Join-Path $env:USERPROFILE "bin" }
     return $candidates | Select-Object -Unique | Where-Object {
-        Test-Path -LiteralPath (Join-Path $_ "Pubto.exe") -PathType Leaf
+        (Test-Path -LiteralPath (Join-Path $_ "pubto-desktop.exe") -PathType Leaf) -or
+            (Test-Path -LiteralPath (Join-Path $_ "Pubto.exe") -PathType Leaf)
     } | Select-Object -First 1
+}
+
+function Get-PubtoDesktopExecutable {
+    param([string]$InstallRoot)
+    foreach ($name in @("pubto-desktop.exe", "Pubto.exe")) {
+        $candidate = Join-Path $InstallRoot $name
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    }
+    return $null
+}
+
+function Add-PubtoUserPath {
+    param([string]$Directory)
+    $fullDirectory = [IO.Path]::GetFullPath($Directory).TrimEnd([char[]]@('\', '/'))
+    $current = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $parts = @($current -split ';' | Where-Object { $_ -and $_.Trim() })
+    $present = @($parts | Where-Object { $_.Trim().TrimEnd([char[]]@('\', '/')) -ieq $fullDirectory })
+    if ($present.Count -eq 0) {
+        [Environment]::SetEnvironmentVariable('Path', (($parts + $fullDirectory) -join ';'), 'User')
+    }
+    $updated = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $verifiedEntries = @($updated -split ';' | Where-Object { $_.Trim().TrimEnd([char[]]@('\', '/')) -ieq $fullDirectory })
+    if ($verifiedEntries.Count -eq 0) {
+        throw "Could not add the Pubto command folder to your user PATH."
+    }
+    $processEntries = @($env:Path -split ';' | Where-Object { $_.Trim().TrimEnd([char[]]@('\', '/')) -ieq $fullDirectory })
+    if ($processEntries.Count -eq 0) {
+        $env:Path = "$fullDirectory;$env:Path"
+    }
+    try {
+        if (-not ('PubtoEnvironmentBroadcast' -as [type])) {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class PubtoEnvironmentBroadcast {
+  [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+  public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, UIntPtr wParam, string lParam, uint flags, uint timeout, out UIntPtr result);
+}
+'@
+        }
+        $result = [UIntPtr]::Zero
+        [void][PubtoEnvironmentBroadcast]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$result)
+    } catch { }
 }
 
 function Get-PubtoProcesses {
@@ -312,8 +356,9 @@ function Restore-Previous {
     if (Test-Path -LiteralPath $backupConfigRoot) { Copy-Directory $backupConfigRoot $configRoot }
     if (Test-Path -LiteralPath $tauriDataRoot) { Remove-Item -LiteralPath $tauriDataRoot -Recurse -Force -ErrorAction SilentlyContinue }
     if (Test-Path -LiteralPath $backupTauriDataRoot) { Copy-Directory $backupTauriDataRoot $tauriDataRoot }
-    $restoredApp = Find-PubtoInstall $previousInstallRoot
-    if ($restoredApp) { Start-Process -FilePath (Join-Path $restoredApp "Pubto.exe") }
+    $restoredInstall = Find-PubtoInstall $previousInstallRoot
+    $restoredApp = if ($restoredInstall) { Get-PubtoDesktopExecutable $restoredInstall }
+    if ($restoredApp) { Start-Process -FilePath $restoredApp }
     Write-Warning "Pubto Desktop installation failed; the previous app and local data were restored."
 }
 
@@ -415,8 +460,9 @@ try {
 
     $installPhase = "launch"
     $installedInstallRoot = Find-PubtoInstall
-    if (-not $installedInstallRoot) { throw "Pubto.exe was not found in a supported installation directory." }
-    $desktopApp = Join-Path $installedInstallRoot "Pubto.exe"
+    if (-not $installedInstallRoot) { throw "The Pubto Desktop app was not found in a supported installation directory." }
+    $desktopApp = Get-PubtoDesktopExecutable $installedInstallRoot
+    if (-not $desktopApp) { throw "The Pubto Desktop app could not be located after installation." }
 
     # The Desktop package carries the matching CLI sidecar.  Install it in
     # the stable per-user bin directory so Skill setup is complete in one
@@ -440,17 +486,32 @@ try {
     }
     if ($cliSource) {
         if ((Test-Path -LiteralPath $cliDestination -PathType Leaf) -and -not (Test-Path -LiteralPath $cliMarker -PathType Leaf)) {
-            Write-Host "An existing Pubto command is not managed by this installation; it was left unchanged."
+            throw "An existing Pubto command is not managed by this installation; it was left unchanged."
         } else {
             New-Item -ItemType Directory -Path (Split-Path -Parent $cliDestination) -Force | Out-Null
             $cliTemp = "$cliDestination.pubto-install.tmp"
             Copy-Item -LiteralPath $cliSource -Destination $cliTemp -Force
+            $cliVersion = (& $cliTemp version 2>&1 | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0 -or $cliVersion -ne $releaseVersion) {
+                Remove-Item -LiteralPath $cliTemp -Force -ErrorAction SilentlyContinue
+                throw "The Pubto command did not pass its version check."
+            }
+            $cliHelp = (& $cliTemp help 2>&1 | Out-String)
+            if ($LASTEXITCODE -ne 0 -or $cliHelp -notmatch 'pubto publish') {
+                Remove-Item -LiteralPath $cliTemp -Force -ErrorAction SilentlyContinue
+                throw "The Pubto command did not pass its command check."
+            }
             Move-Item -LiteralPath $cliTemp -Destination $cliDestination -Force
-            @{ version = $releaseVersion; source = "desktop-bundle"; path = $cliDestination } |
-                ConvertTo-Json -Compress | Set-Content -LiteralPath $cliMarker -Encoding UTF8
+            Add-PubtoUserPath (Split-Path -Parent $cliDestination)
+            $marker = @{ version = $releaseVersion; source = "desktop-bundle"; path = $cliDestination; pathConfigured = $true } | ConvertTo-Json -Compress
+            [IO.File]::WriteAllText($cliMarker, $marker, [Text.UTF8Encoding]::new($false))
         }
     } else {
         throw "The Desktop package does not contain its matching Pubto CLI. Re-download the official package and try again."
+    }
+    $resolvedCommand = Get-Command pubto -ErrorAction SilentlyContinue
+    if (-not $resolvedCommand -or [IO.Path]::GetFullPath($resolvedCommand.Source) -ine [IO.Path]::GetFullPath($cliDestination)) {
+        throw "The Pubto command was installed, but this session cannot resolve it from PATH."
     }
     Start-Process -FilePath $desktopApp
 
@@ -465,7 +526,11 @@ try {
                     $health = Invoke-RestMethod -Method Get -Uri ($agentUri.AbsoluteUri.TrimEnd("/") + "/v1/health")
                     if ($health.status -eq "ok" -and $health.component -eq "pubto-agent" -and $health.version -eq $releaseVersion) {
                         $rollbackArmed = $false
-                        Write-Host "Pubto Desktop and the Pubto command are installed and ready."
+                        $resolvedCommand = Get-Command pubto -ErrorAction SilentlyContinue
+                        if (-not $resolvedCommand -or $resolvedCommand.Source -ine $cliDestination) {
+                            throw "The Pubto command was installed, but this session cannot resolve it from PATH."
+                        }
+                        Write-Host "Pubto Desktop and the Pubto command are installed and verified."
                         Write-Host "Open a new terminal or restart your AI CLI before running pubto."
                         return
                     }
